@@ -211,6 +211,16 @@ func (d *Daemon) Delegations() *delegation.Manager {
 	return d.delegations
 }
 
+// Cfg returns the daemon configuration.
+func (d *Daemon) Cfg() config.Config {
+	return d.cfg
+}
+
+// Logger returns the daemon logger.
+func (d *Daemon) Logger() *slog.Logger {
+	return d.logger
+}
+
 // heartbeatLoop submits periodic heartbeat signals. Currently log-only
 // since transaction submission is not yet implemented.
 func (d *Daemon) heartbeatLoop(ctx context.Context) {

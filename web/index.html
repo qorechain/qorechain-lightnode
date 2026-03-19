@@ -1,16 +1,409 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QoreChain Light Node</title>
-  <link rel="stylesheet" href="/css/qore.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QoreChain Light Node</title>
+    <link rel="icon" type="image/png" href="assets/icon.png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+    <link rel="stylesheet" href="css/qore.css">
+    <style>[x-cloak] { display: none !important; }</style>
 </head>
-<body>
-  <div id="app">
-    <h1>QoreChain Light Node Dashboard</h1>
-    <p>Loading...</p>
-  </div>
-  <script src="/js/app.js"></script>
+<body x-data="app">
+
+    <!-- Mobile toggle -->
+    <button class="mobile-toggle" @click="sidebarOpen = !sidebarOpen" aria-label="Toggle menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+    </button>
+
+    <!-- Sidebar overlay (mobile) -->
+    <div class="sidebar-overlay" :class="{ open: sidebarOpen }" @click="sidebarOpen = false"></div>
+
+    <div class="layout">
+        <!-- Sidebar -->
+        <aside class="sidebar no-scrollbar" :class="{ open: sidebarOpen }">
+            <div class="sidebar-logo">
+                <img src="assets/logo.png" alt="QoreChain">
+                <span>QoreChain Light Node</span>
+            </div>
+            <nav class="sidebar-nav">
+                <template x-for="item in navItems" :key="item.id">
+                    <div class="nav-item"
+                         :class="{ active: page === item.id }"
+                         @click="navigate(item.id)"
+                         x-html="navIcon(item.icon) + '<span>' + item.label + '</span>'">
+                    </div>
+                </template>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="flex items-center gap-8">
+                    <span class="status-dot" :class="statusClass(status)"></span>
+                    <span x-text="statusLabel(status)"></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main content -->
+        <main class="main">
+
+            <!-- OVERVIEW -->
+            <div x-show="page === 'overview'" x-cloak>
+                <h1 class="page-title">Overview</h1>
+
+                <!-- Node status -->
+                <div class="card mb-24">
+                    <div class="card-header">
+                        <span class="card-title">Node Status</span>
+                        <span class="badge" :class="status?.syncing ? 'badge-syncing' : 'badge-active'"
+                              x-text="statusLabel(status)"></span>
+                    </div>
+                    <div class="grid-3">
+                        <div>
+                            <div class="stat-label">Latest Height</div>
+                            <div class="stat-value accent" x-text="fmtNumber(status?.latest_height)"></div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Node Type</div>
+                            <div class="stat-value" x-text="status?.node_type || 'Light'"></div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Chain ID</div>
+                            <div class="stat-value text-sm font-mono" x-text="status?.chain_id || '--'"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stats grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Delegated</div>
+                        <div class="stat-value accent" x-text="fmtQOR(status?.total_delegated)"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Pending Rewards</div>
+                        <div class="stat-value success" x-text="fmtQOR(status?.pending_rewards)"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Validators</div>
+                        <div class="stat-value" x-text="fmtNumber(status?.validator_count)"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Uptime</div>
+                        <div class="stat-value success" x-text="fmtPercent(status?.uptime)"></div>
+                    </div>
+                </div>
+
+                <div class="grid-2 mb-24">
+                    <!-- Recent headers -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Recent Headers</span>
+                        </div>
+                        <div class="recent-list no-scrollbar">
+                            <template x-for="h in recentHeaders.slice(0, 15)" :key="h.height">
+                                <div class="recent-item">
+                                    <span class="text-accent font-mono" x-text="'#' + fmtNumber(h.height)"></span>
+                                    <span class="text-secondary font-mono" x-text="shortenHash(h.hash)"></span>
+                                    <span class="text-muted text-xs" x-text="fmtTime(h.time)"></span>
+                                </div>
+                            </template>
+                            <div x-show="recentHeaders.length === 0" class="text-muted text-sm" style="padding:12px">
+                                No headers received yet
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Activity chart -->
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Network Activity</span>
+                        </div>
+                        <div id="activity-chart" class="chart-container"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VALIDATORS -->
+            <div x-show="page === 'validators'" x-cloak>
+                <h1 class="page-title">Validators</h1>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Moniker</th>
+                                    <th>Voting Power</th>
+                                    <th>Commission</th>
+                                    <th>Reputation</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="v in validators" :key="v.operator_address">
+                                    <tr>
+                                        <td style="color:var(--text-primary);font-weight:500" x-text="v.moniker"></td>
+                                        <td x-text="fmtNumber(v.voting_power)"></td>
+                                        <td x-text="fmtPercent(v.commission)"></td>
+                                        <td>
+                                            <span class="badge badge-accent" x-text="v.reputation_score != null ? v.reputation_score.toFixed(1) : '--'"></span>
+                                        </td>
+                                        <td>
+                                            <span class="badge" :class="v.status === 'active' ? 'badge-active' : 'badge-inactive'" x-text="v.status"></span>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr x-show="validators.length === 0">
+                                    <td colspan="5" class="text-muted" style="text-align:center;padding:24px">No validator data available</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DELEGATION -->
+            <div x-show="page === 'delegation'" x-cloak>
+                <h1 class="page-title">Delegation</h1>
+
+                <div class="grid-2 mb-24">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Auto-Compound</span>
+                            <span class="badge" :class="autoCompound ? 'badge-active' : 'badge-inactive'"
+                                  x-text="autoCompound ? 'Enabled' : 'Disabled'"></span>
+                        </div>
+                        <p class="text-secondary text-sm">
+                            Rewards are automatically restaked when auto-compound is enabled.
+                        </p>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">Split Configuration</span>
+                        </div>
+                        <template x-if="splitConfig">
+                            <div>
+                                <template x-for="(s, i) in splitConfig.splits" :key="i">
+                                    <div class="flex justify-between text-sm" style="padding:4px 0">
+                                        <span class="text-secondary font-mono" x-text="s.validator"></span>
+                                        <span class="text-accent" x-text="fmtPercent(s.weight)"></span>
+                                    </div>
+                                </template>
+                            </div>
+                        </template>
+                        <div x-show="!splitConfig" class="text-muted text-sm">No split configuration set</div>
+                    </div>
+                </div>
+
+                <!-- Delegations table -->
+                <div class="card mb-24">
+                    <div class="card-header">
+                        <span class="card-title">Current Delegations</span>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Validator</th>
+                                    <th>Amount</th>
+                                    <th>Rewards</th>
+                                    <th>Share</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="d in delegations" :key="d.validator">
+                                    <tr>
+                                        <td style="color:var(--text-primary);font-weight:500" x-text="d.validator"></td>
+                                        <td x-text="fmtQOR(d.amount)"></td>
+                                        <td class="text-success" x-text="fmtQOR(d.rewards)"></td>
+                                        <td x-text="fmtPercent(d.share)"></td>
+                                    </tr>
+                                </template>
+                                <tr x-show="delegations.length === 0">
+                                    <td colspan="4" class="text-muted" style="text-align:center;padding:24px">No delegations found</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Rebalance alerts -->
+                <div class="card" x-show="rebalanceAlerts.length > 0">
+                    <div class="card-header">
+                        <span class="card-title">Rebalance Alerts</span>
+                    </div>
+                    <div class="recent-list">
+                        <template x-for="(a, i) in rebalanceAlerts" :key="i">
+                            <div class="recent-item">
+                                <span class="badge badge-syncing" x-text="a.severity || 'info'"></span>
+                                <span class="text-secondary" x-text="a.message"></span>
+                                <span class="text-muted text-xs" x-text="fmtTime(a.time)"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NETWORK -->
+            <div x-show="page === 'network'" x-cloak>
+                <h1 class="page-title">Network</h1>
+
+                <div class="stats-grid mb-24" style="grid-template-columns: repeat(3, 1fr)">
+                    <div class="stat-card">
+                        <div class="stat-label">Peers</div>
+                        <div class="stat-value" x-text="fmtNumber(networkPeers)"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Latest Height</div>
+                        <div class="stat-value accent" x-text="fmtNumber(status?.latest_height)"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Sync Status</div>
+                        <div class="stat-value" :class="syncStatus?.syncing ? 'warning' : 'success'"
+                             x-text="syncStatus?.syncing ? 'Syncing' : 'Synced'"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Block Height Over Time</span>
+                    </div>
+                    <div id="block-chart" class="chart-container"></div>
+                </div>
+            </div>
+
+            <!-- BRIDGE -->
+            <div x-show="page === 'bridge'" x-cloak>
+                <h1 class="page-title">Bridge</h1>
+
+                <div class="card mb-24">
+                    <div class="card-header">
+                        <span class="card-title">Bridge Connections</span>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Chain</th>
+                                    <th>Status</th>
+                                    <th>Last Activity</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="c in bridgeConnections" :key="c.chain_id">
+                                    <tr>
+                                        <td style="color:var(--text-primary);font-weight:500" x-text="c.chain_name || c.chain_id"></td>
+                                        <td>
+                                            <span class="badge" :class="c.connected ? 'badge-active' : 'badge-inactive'"
+                                                  x-text="c.connected ? 'Connected' : 'Disconnected'"></span>
+                                        </td>
+                                        <td class="text-muted" x-text="fmtTime(c.last_activity)"></td>
+                                    </tr>
+                                </template>
+                                <tr x-show="bridgeConnections.length === 0">
+                                    <td colspan="3" class="text-muted" style="text-align:center;padding:24px">No bridge connections configured</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Recent Bridge Activity</span>
+                    </div>
+                    <div class="recent-list no-scrollbar">
+                        <template x-for="(a, i) in bridgeActivity" :key="i">
+                            <div class="recent-item">
+                                <span class="badge badge-accent" x-text="a.type || 'transfer'"></span>
+                                <span class="text-secondary" x-text="a.description"></span>
+                                <span class="text-accent font-mono" x-text="fmtQOR(a.amount)"></span>
+                                <span class="text-muted text-xs" x-text="fmtTime(a.time)"></span>
+                            </div>
+                        </template>
+                        <div x-show="bridgeActivity.length === 0" class="text-muted text-sm" style="padding:12px">
+                            No recent bridge activity
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TOKENOMICS -->
+            <div x-show="page === 'tokenomics'" x-cloak>
+                <h1 class="page-title">Tokenomics</h1>
+
+                <div class="stats-grid mb-24" style="grid-template-columns: repeat(3, 1fr)">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Burned</div>
+                        <div class="stat-value danger" x-text="fmtQOR(burnStats?.total_burned)"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Burn Rate</div>
+                        <div class="stat-value warning" x-text="fmtPercent(burnStats?.burn_rate)"></div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Inflation</div>
+                        <div class="stat-value" x-text="fmtPercent(inflationInfo?.rate)"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Fee Distribution</span>
+                    </div>
+                    <div class="flex items-center gap-24" style="padding:8px 0">
+                        <div class="pie-chart" :style="pieStyle(feeDistribution)"></div>
+                        <div class="pie-legend">
+                            <template x-for="(f, i) in feeDistribution" :key="i">
+                                <div class="pie-legend-item">
+                                    <span class="pie-legend-dot" :style="{ background: ['#3da8ff','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'][i % 6] }"></span>
+                                    <span x-text="f.label + ' (' + (f.percent * 100).toFixed(0) + '%)'"></span>
+                                </div>
+                            </template>
+                            <div x-show="feeDistribution.length === 0" class="text-muted text-sm">
+                                No fee distribution data available
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SETTINGS -->
+            <div x-show="page === 'settings'" x-cloak>
+                <h1 class="page-title">Settings</h1>
+
+                <div class="card mb-24">
+                    <div class="card-header">
+                        <span class="card-title">Connection Info</span>
+                    </div>
+                    <div class="grid-2">
+                        <div>
+                            <div class="stat-label">WebSocket</div>
+                            <div class="flex items-center gap-8" style="margin-top:4px">
+                                <span class="status-dot" :class="wsConnected ? 'connected' : 'disconnected'"></span>
+                                <span class="text-secondary text-sm" x-text="wsConnected ? 'Connected' : 'Disconnected'"></span>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="stat-label">API Endpoint</div>
+                            <span class="text-secondary text-sm font-mono" x-text="location.origin + '/api'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <span class="card-title">Current Configuration</span>
+                    </div>
+                    <div class="config-block" x-text="configJSON()"></div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+    <script src="js/app.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 </body>
 </html>
