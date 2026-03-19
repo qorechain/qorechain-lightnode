@@ -78,7 +78,7 @@ type DashboardConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		NodeType:       "sx",
-		Version:        "1.15.0",
+		Version:        "2.6.0",
 		ChainID:        "qorechain-diana",
 		RPCAddr:        "http://localhost:26657",
 		GRPCAddr:       "localhost:9090",

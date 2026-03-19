@@ -42,7 +42,7 @@ docker compose up lightnode-ux    # dashboard edition (port 8080)
 lightnode-sx keys create --name operator
 
 # Register on-chain
-lightnode-sx register --node-type sx --version 1.15.0
+lightnode-sx register --node-type sx --version 2.6.0
 
 # Start daemon
 lightnode-sx start --config config.toml

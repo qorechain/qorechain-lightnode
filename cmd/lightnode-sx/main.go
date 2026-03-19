@@ -15,7 +15,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/keyring"
 )
 
-const version = "1.15.0"
+const version = "2.6.0"
 
 var (
 	cfgFile string
