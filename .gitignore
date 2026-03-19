@@ -5,8 +5,8 @@ build/
 *.dll
 *.so
 *.dylib
-lightnode-sx
-lightnode-ux
+/lightnode-sx
+/lightnode-ux
 
 # Test
 *.test
