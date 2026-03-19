@@ -7,6 +7,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.49.0
+	golang.org/x/net v0.51.0
 	modernc.org/sqlite v1.47.0
 )
 
