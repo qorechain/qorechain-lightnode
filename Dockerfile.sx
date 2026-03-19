@@ -3,25 +3,16 @@ FROM golang:1.26.1-bookworm AS builder
 
 WORKDIR /build
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copy module files first for layer caching
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy PQC native library
-COPY lib/ lib/
-
 # Copy source
 COPY . .
 
-# Build SX binary with CGO for PQC support
-ENV CGO_ENABLED=1
-ENV CGO_LDFLAGS="-L/build/lib/linux_amd64"
-RUN go build -o /build/lightnode-sx ./cmd/lightnode-sx/
+# Build SX binary
+# CGO_ENABLED=0 for portable builds; PQC native library loaded at runtime
+RUN CGO_ENABLED=0 go build -o /build/lightnode-sx ./cmd/lightnode-sx/
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -31,14 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/lightnode-sx /usr/local/bin/lightnode-sx
-COPY --from=builder /build/lib/linux_amd64/libqorepqc.so /usr/lib/libqorepqc.so
 
-RUN ldconfig
+# PQC native library (mount or copy externally when available)
+# COPY lib/linux_amd64/libqorepqc.so /usr/lib/libqorepqc.so
+# RUN ldconfig
 
-# Create data directory
 RUN mkdir -p /root/.qorechain-lightnode
-
-EXPOSE 26657
 
 ENTRYPOINT ["lightnode-sx"]
 CMD ["start"]

@@ -203,14 +203,14 @@ func (a *API) HandleTokenomics(w http.ResponseWriter, r *http.Request) {
 func (a *API) HandleSettings(w http.ResponseWriter, r *http.Request) {
 	// Return only safe configuration values (no keys, passwords, etc.)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"node_type":    a.cfg.NodeType,
-		"version":      a.cfg.Version,
-		"chain_id":     a.cfg.ChainID,
-		"rpc_addr":     a.cfg.RPCAddr,
-		"data_dir":     a.cfg.DataDir,
-		"log_level":    a.cfg.LogLevel,
-		"dashboard":    a.cfg.Dashboard,
-		"telemetry":    a.cfg.Telemetry,
+		"node_type": a.cfg.NodeType,
+		"version":   a.cfg.Version,
+		"chain_id":  a.cfg.ChainID,
+		"rpc_addr":  a.cfg.RPCAddr,
+		"data_dir":  a.cfg.DataDir,
+		"log_level": a.cfg.LogLevel,
+		"dashboard": a.cfg.Dashboard,
+		"telemetry": a.cfg.Telemetry,
 		"delegation": map[string]interface{}{
 			"auto_compound":     a.cfg.Delegation.AutoCompound,
 			"compound_interval": a.cfg.Delegation.CompoundInterval,

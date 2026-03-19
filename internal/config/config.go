@@ -20,12 +20,12 @@ type Config struct {
 	GRPCAddr string `toml:"grpc_addr"`
 
 	// Light client
-	TrustPeriod    string   `toml:"trust_period"`    // e.g. "168h" (7 days)
-	TrustHeight    int64    `toml:"trust_height"`
-	TrustHash      string   `toml:"trust_hash"`
-	MaxClockDrift  string   `toml:"max_clock_drift"`  // e.g. "10s"
-	PrimaryAddr    string   `toml:"primary_addr"`     // primary RPC for light client
-	WitnessAddrs   []string `toml:"witness_addrs"`    // witness RPCs
+	TrustPeriod   string   `toml:"trust_period"` // e.g. "168h" (7 days)
+	TrustHeight   int64    `toml:"trust_height"`
+	TrustHash     string   `toml:"trust_hash"`
+	MaxClockDrift string   `toml:"max_clock_drift"` // e.g. "10s"
+	PrimaryAddr   string   `toml:"primary_addr"`    // primary RPC for light client
+	WitnessAddrs  []string `toml:"witness_addrs"`   // witness RPCs
 
 	// Storage
 	DataDir string `toml:"data_dir"` // default ~/.qorechain-lightnode

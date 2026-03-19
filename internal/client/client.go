@@ -19,8 +19,8 @@ type Client struct {
 // New creates a new chain client.
 func New(rpcURL, lcdURL string) *Client {
 	return &Client{
-		rpcURL: rpcURL,
-		lcdURL: lcdURL,
+		rpcURL:  rpcURL,
+		lcdURL:  lcdURL,
 		httpCli: &http.Client{Timeout: 15 * time.Second},
 	}
 }
