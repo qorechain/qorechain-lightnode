@@ -5,6 +5,10 @@ build/
 *.dll
 *.so
 *.dylib
+
+# Exception: PQC native libraries (committed for Docker/CI builds)
+!lib/**/*.so
+!lib/**/*.dylib
 /lightnode-sx
 /lightnode-ux
 

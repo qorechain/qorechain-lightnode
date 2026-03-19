@@ -37,11 +37,17 @@ jobs:
         with:
           go-version: "1.26"
 
+      - name: Setup cross-compilation
+        if: matrix.goos == 'linux' && matrix.goarch == 'arm64'
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build SX
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: ${{ matrix.goos == 'linux' && '1' || '0' }}
+          CC: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
         run: |
           ext=""
           if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
@@ -51,7 +57,8 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: ${{ matrix.goos == 'linux' && '1' || '0' }}
+          CC: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
         run: |
           ext=""
           if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi

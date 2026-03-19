@@ -17,13 +17,19 @@ jobs:
           go-version: "1.26"
 
       - name: Vet
-        run: CGO_ENABLED=0 go vet ./internal/config/... ./internal/db/... ./internal/client/...
+        run: CGO_ENABLED=1 go vet ./internal/config/... ./internal/db/... ./internal/client/...
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/lib/linux_amd64
 
       - name: Build SX
-        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/lightnode-sx/
+        run: CGO_ENABLED=1 go build -o /dev/null ./cmd/lightnode-sx/
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/lib/linux_amd64
 
       - name: Build UX
-        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/lightnode-ux/
+        run: CGO_ENABLED=1 go build -o /dev/null ./cmd/lightnode-ux/
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/lib/linux_amd64
 
   lint:
     runs-on: ubuntu-latest

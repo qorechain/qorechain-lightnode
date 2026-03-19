@@ -10,9 +10,8 @@ RUN go mod download
 # Copy source
 COPY . .
 
-# Build UX binary
-# CGO_ENABLED=0 for portable builds; PQC native library loaded at runtime
-RUN CGO_ENABLED=0 go build -o /build/lightnode-ux ./cmd/lightnode-ux/
+# Build UX binary with CGO for PQC native library
+RUN CGO_ENABLED=1 go build -o /build/lightnode-ux ./cmd/lightnode-ux/
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -22,10 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/lightnode-ux /usr/local/bin/lightnode-ux
-
-# PQC native library (mount or copy externally when available)
-# COPY lib/linux_amd64/libqorepqc.so /usr/lib/libqorepqc.so
-# RUN ldconfig
+COPY --from=builder /build/lib/linux_amd64/libqorepqc.so /usr/lib/libqorepqc.so
+RUN ldconfig
 
 RUN mkdir -p /root/.qorechain-lightnode
 
