@@ -1,0 +1,58 @@
+name: Docker
+
+on:
+  push:
+    tags:
+      - "v*"
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-sx:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sx
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-sx:latest
+            ${{ env.IMAGE_PREFIX }}-sx:${{ github.ref_name }}
+
+  build-ux:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ux
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}-ux:latest
+            ${{ env.IMAGE_PREFIX }}-ux:${{ github.ref_name }}

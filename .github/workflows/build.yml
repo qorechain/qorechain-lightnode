@@ -1,0 +1,43 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Vet
+        run: CGO_ENABLED=0 go vet ./internal/config/... ./internal/db/... ./internal/client/...
+
+      - name: Build SX
+        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/lightnode-sx/
+
+      - name: Build UX
+        run: CGO_ENABLED=0 go build -o /dev/null ./cmd/lightnode-ux/
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Files need formatting:"
+            gofmt -l .
+            exit 1
+          fi

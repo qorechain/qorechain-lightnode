@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  lightnode-sx:
+    build:
+      context: .
+      dockerfile: Dockerfile.sx
+    container_name: qorechain-lightnode-sx
+    volumes:
+      - sx-data:/root/.qorechain-lightnode
+    environment:
+      - QORECHAIN_RPC_ADDR=http://host.docker.internal:26657
+    restart: unless-stopped
+
+  lightnode-ux:
+    build:
+      context: .
+      dockerfile: Dockerfile.ux
+    container_name: qorechain-lightnode-ux
+    ports:
+      - "8420:8420"
+    volumes:
+      - ux-data:/root/.qorechain-lightnode
+    environment:
+      - QORECHAIN_RPC_ADDR=http://host.docker.internal:26657
+    restart: unless-stopped
+
+volumes:
+  sx-data:
+  ux-data:
