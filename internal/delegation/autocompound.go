@@ -5,20 +5,24 @@ import (
 	"log/slog"
 	"strconv"
 	"time"
+
+	"github.com/qorechain/qorechain-lightnode/internal/client"
 )
 
 // AutoCompounder periodically claims and re-delegates rewards.
 type AutoCompounder struct {
 	manager   *Manager
+	txBuilder *client.TxBuilder
 	interval  time.Duration
 	minReward int64 // minimum uqor to trigger claim
 	logger    *slog.Logger
 }
 
 // NewAutoCompounder creates an auto-compound loop.
-func NewAutoCompounder(manager *Manager, interval time.Duration, minReward int64, logger *slog.Logger) *AutoCompounder {
+func NewAutoCompounder(manager *Manager, txBuilder *client.TxBuilder, interval time.Duration, minReward int64, logger *slog.Logger) *AutoCompounder {
 	return &AutoCompounder{
 		manager:   manager,
+		txBuilder: txBuilder,
 		interval:  interval,
 		minReward: minReward,
 		logger:    logger,
@@ -60,6 +64,31 @@ func (ac *AutoCompounder) compound(ctx context.Context) {
 	}
 
 	ac.logger.Info("auto-compounding rewards", "amount_uqor", amount)
+
+	// Submit claim rewards transaction
+	msg := client.MsgClaimLightNodeRewards{
+		Type:     "/qorechain.lightnode.v1.MsgClaimLightNodeRewards",
+		Operator: ac.manager.address,
+	}
+
+	resp, err := ac.txBuilder.BuildAndBroadcast(ctx, msg)
+	if err != nil {
+		ac.logger.Warn("claim rewards tx failed", "error", err)
+		return
+	}
+
+	if resp.TxResponse.Code != 0 {
+		ac.logger.Warn("claim rewards tx rejected",
+			"code", resp.TxResponse.Code,
+			"log", resp.TxResponse.RawLog,
+		)
+		return
+	}
+
+	ac.logger.Info("rewards claimed and compounded",
+		"amount_uqor", amount,
+		"tx_hash", resp.TxResponse.TxHash,
+	)
 
 	// Record the compound action
 	now := time.Now().UTC().Format(time.RFC3339)

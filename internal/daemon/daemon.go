@@ -20,6 +20,11 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/telemetry"
 )
 
+const (
+	lightnodeMsgTypeHeartbeat    = "/qorechain.lightnode.v1.MsgHeartbeat"
+	lightnodeMsgTypeClaimRewards = "/qorechain.lightnode.v1.MsgClaimLightNodeRewards"
+)
+
 // Daemon orchestrates the light node subsystems.
 type Daemon struct {
 	cfg    config.Config
@@ -28,6 +33,7 @@ type Daemon struct {
 	store       *db.DB
 	chain       *client.Client
 	keys        keyring.Backend
+	txBuilder   *client.TxBuilder
 	lc          *lightclient.LightClient
 	telem       *telemetry.Manager
 	delegations *delegation.Manager
@@ -57,6 +63,9 @@ func New(cfg config.Config) (*Daemon, error) {
 		store.Close()
 		return nil, fmt.Errorf("initializing keyring: %w", err)
 	}
+
+	// Transaction builder for submitting TXs
+	txBuilder := client.NewTxBuilder(chain, keys, cfg.KeyName, cfg.ChainID)
 
 	// Light client
 	lc := lightclient.New(chain, store, logger)
@@ -98,7 +107,7 @@ func New(cfg config.Config) (*Daemon, error) {
 	if minReward <= 0 {
 		minReward = 1000000 // 1 QOR
 	}
-	autoComp := delegation.NewAutoCompounder(delMgr, compoundInterval, minReward, logger)
+	autoComp := delegation.NewAutoCompounder(delMgr, txBuilder, compoundInterval, minReward, logger)
 
 	// Rebalancer
 	rebalancer := delegation.NewRebalancer(chain, delMgr, cfg.Delegation.MinReputation, logger)
@@ -109,6 +118,7 @@ func New(cfg config.Config) (*Daemon, error) {
 		store:       store,
 		chain:       chain,
 		keys:        keys,
+		txBuilder:   txBuilder,
 		lc:          lc,
 		telem:       telem,
 		delegations: delMgr,
@@ -221,12 +231,18 @@ func (d *Daemon) Logger() *slog.Logger {
 	return d.logger
 }
 
-// heartbeatLoop submits periodic heartbeat signals. Currently log-only
-// since transaction submission is not yet implemented.
+// heartbeatLoop submits periodic heartbeat transactions to prove node liveness.
 func (d *Daemon) heartbeatLoop(ctx context.Context) {
 	// Default heartbeat every 100 blocks (~10 min at 6s blocks)
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
+
+	// Get operator address
+	keyInfo, err := d.keys.Get(d.cfg.KeyName)
+	if err != nil {
+		d.logger.Error("heartbeat loop: cannot get operator key", "error", err)
+		return
+	}
 
 	for {
 		select {
@@ -234,7 +250,31 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			height := d.lc.LatestHeight()
-			d.logger.Info("heartbeat", "latest_height", height)
+			d.logger.Info("submitting heartbeat", "latest_height", height)
+
+			msg := client.MsgHeartbeat{
+				Type:     lightnodeMsgTypeHeartbeat,
+				Operator: keyInfo.Address,
+			}
+
+			resp, err := d.txBuilder.BuildAndBroadcast(ctx, msg)
+			if err != nil {
+				d.logger.Warn("heartbeat tx failed", "error", err)
+				continue
+			}
+
+			if resp.TxResponse.Code != 0 {
+				d.logger.Warn("heartbeat tx rejected",
+					"code", resp.TxResponse.Code,
+					"log", resp.TxResponse.RawLog,
+				)
+				continue
+			}
+
+			d.logger.Info("heartbeat submitted",
+				"tx_hash", resp.TxResponse.TxHash,
+				"height", resp.TxResponse.Height,
+			)
 		}
 	}
 }
