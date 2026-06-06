@@ -19,7 +19,7 @@ Light node client for the QoreChain network. Provides two editions:
 - Post-quantum cryptography support (Dilithium-5)
 - **Interactive onboarding wizard** that runs a PQC self-test, accepts the chain RPC endpoint, and imports or generates a Dilithium-5 validator key
 - **Local-only mode** so the node can prove its PQC stack works even before the chain itself is deployed
-- **Live PQC self-test** — `lightnode-sx selftest` runs keygen → sign → verify → tamper-detection in under a second
+- **Live PQC self-test** — `lightnode-sx selftest` runs keygen -> sign -> verify -> tamper-detection in under a second
 
 ## Quick Start
 
@@ -37,7 +37,7 @@ build/lightnode-sx start
 ```
 
 The wizard asks for:
-- **Chain RPC endpoint** — paste the URL (e.g. `https://rpc.qorechain.io:26657`), or leave blank to run in local-only mode while the chain itself is still being deployed.
+- **Chain RPC endpoint** — paste the official RPC URL when available, or leave blank to run in local-only mode while the chain itself is still being deployed.
 - **Private key** — paste a hex-encoded Dilithium-5 key, or type `g` to generate a fresh one on this node.
 
 If you leave the endpoint blank the daemon will start in **local-only mode** — the PQC stack is fully exercised and the web dashboard shows a banner explaining the state. Re-run `onboard` once the chain is live to point at a real RPC.
@@ -67,9 +67,17 @@ lightnode-sx selftest
 
 Runs 5 checks: keygen, sign, verify-valid, reject-tampered-sig, reject-tampered-msg.
 
+## Additional Documentation
+
+- [Installation Guide](./INSTALLATION_GUIDE.md)
+- [FAQ](./FAQ.md)
+- [Community Notes](./COMMUNITY_NOTES.md)
+- [Operator Journal](./OPERATOR_JOURNAL.md)
+- [Example Configuration](./config.example.toml)
+
 ## Configuration
 
-See `config.example.toml` for all available options.
+See `config.example.toml` for available example options. Always verify network values against current official QoreChain sources before using them in production.
 
 ## License
 
