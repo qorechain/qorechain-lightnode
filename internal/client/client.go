@@ -3,11 +3,18 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 )
+
+// ErrEndpointUnavailable is returned when a chain REST route is not exposed
+// (HTTP 501 Not Implemented) — e.g. an optional module whose gRPC-gateway
+// routes are not registered. Telemetry collectors treat this as "skip", not a
+// hard error, so an operator without those optional REST routes sees a clean log.
+var ErrEndpointUnavailable = errors.New("chain REST endpoint not available")
 
 // Client connects to a QoreChain node via REST/RPC.
 type Client struct {
@@ -36,6 +43,9 @@ func (c *Client) get(ctx context.Context, url string, out interface{}) error {
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotImplemented {
+		return ErrEndpointUnavailable
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))

@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -43,6 +44,10 @@ func (c *BridgeCollector) Run(ctx context.Context) error {
 func (c *BridgeCollector) collect(ctx context.Context) {
 	resp, err := c.chain.BridgeStatus(ctx)
 	if err != nil {
+		if errors.Is(err, client.ErrEndpointUnavailable) {
+			c.logger.Debug("bridge status REST endpoint not exposed; skipping")
+			return
+		}
 		c.logger.Warn("failed to fetch bridge status", "error", err)
 		return
 	}

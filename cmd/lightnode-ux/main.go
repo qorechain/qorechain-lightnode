@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,11 +65,24 @@ func loadConfig() config.Config {
 }
 
 // startCmd runs the daemon + dashboard server until interrupted.
+//
+// Like the SX daemon, on first launch (no config file) it bails out with a
+// pointer to the onboarding wizard unless --skip-onboarding-check is passed,
+// giving the two binaries a consistent start interface.
 func startCmd() *cobra.Command {
-	return &cobra.Command{
+	var skipOnboardingCheck bool
+	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start the UX light node with embedded dashboard",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !skipOnboardingCheck {
+				if _, err := os.Stat(cfgFile); errors.Is(err, os.ErrNotExist) {
+					fmt.Fprintf(os.Stderr, "No config file found at %s.\n\n", cfgFile)
+					fmt.Fprintf(os.Stderr, "Run 'lightnode-ux onboard' to set up the node interactively\n")
+					fmt.Fprintf(os.Stderr, "Or pass --skip-onboarding-check to start with defaults.\n")
+					return fmt.Errorf("config file missing — onboarding required")
+				}
+			}
 			cfg := loadConfig()
 			d, err := daemon.New(cfg)
 			if err != nil {
@@ -112,6 +126,8 @@ func startCmd() *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().BoolVar(&skipOnboardingCheck, "skip-onboarding-check", false, "do not require config.toml at startup (allows local-only start)")
+	return cmd
 }
 
 // versionCmd prints the binary version.

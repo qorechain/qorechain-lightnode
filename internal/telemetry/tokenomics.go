@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -43,6 +44,10 @@ func (c *TokenomicsCollector) Run(ctx context.Context) error {
 func (c *TokenomicsCollector) collect(ctx context.Context) {
 	burnStats, err := c.chain.BurnStats(ctx)
 	if err != nil {
+		if errors.Is(err, client.ErrEndpointUnavailable) {
+			c.logger.Debug("burn stats REST endpoint not exposed; skipping")
+			return
+		}
 		c.logger.Warn("failed to fetch burn stats", "error", err)
 		return
 	}

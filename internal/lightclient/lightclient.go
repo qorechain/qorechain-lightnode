@@ -122,11 +122,22 @@ func (lc *LightClient) storeHeader(h Header) error {
 	return err
 }
 
-// LatestHeight returns the highest synced header height.
+// LatestHeight returns the highest synced header height. When called from a
+// short-lived process that did not run the sync loop (e.g. the `status`
+// subcommand), the in-memory counter is 0, so it falls back to the persisted
+// maximum so operators see the true synced height of the running daemon.
 func (lc *LightClient) LatestHeight() int64 {
 	lc.mu.RLock()
-	defer lc.mu.RUnlock()
-	return lc.latestHeight
+	h := lc.latestHeight
+	lc.mu.RUnlock()
+	if h > 0 {
+		return h
+	}
+	var dbMax int64
+	if lc.store != nil && lc.store.Conn() != nil {
+		_ = lc.store.Conn().QueryRow(`SELECT COALESCE(MAX(height), 0) FROM headers`).Scan(&dbMax)
+	}
+	return dbMax
 }
 
 // IsSyncing returns whether the client is actively syncing.
