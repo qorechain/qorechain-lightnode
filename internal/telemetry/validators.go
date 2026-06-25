@@ -54,7 +54,7 @@ func (c *ValidatorCollector) collect(ctx context.Context) {
 			`INSERT OR REPLACE INTO telemetry_validators
 			 (address, moniker, pool, jailed, updated_at)
 			 VALUES (?, ?, ?, ?, ?)`,
-			v.OperatorAddress, v.Moniker, v.Status, v.Jailed, now,
+			v.OperatorAddress, v.Description.Moniker, v.Status, v.Jailed, now,
 		)
 		if err != nil {
 			c.logger.Warn("failed to store validator", "address", v.OperatorAddress, "error", err)

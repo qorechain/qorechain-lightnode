@@ -34,8 +34,11 @@ type ValidatorsResponse struct {
 // ValidatorInfo holds validator details.
 type ValidatorInfo struct {
 	OperatorAddress string `json:"operator_address"`
-	Moniker         string `json:"description,omitempty"` // nested, simplified
-	Jailed          bool   `json:"jailed"`
+	// Description is a nested object in the staking API; Moniker lives inside it.
+	Description struct {
+		Moniker string `json:"moniker"`
+	} `json:"description"`
+	Jailed bool `json:"jailed"`
 	Status          string `json:"status"`
 	Tokens          string `json:"tokens"`
 	Commission      struct {

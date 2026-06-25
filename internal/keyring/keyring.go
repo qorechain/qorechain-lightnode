@@ -46,6 +46,16 @@ func New(backendType string, dataDir string) (Backend, error) {
 		return NewEncryptedFileBackend(dataDir)
 	case "os":
 		return NewOSKeychainBackend()
+	case "test":
+		// Unattended dev/test backend: an encrypted-file keyring with a fixed,
+		// well-known passphrase (mirrors the Cosmos SDK "test" keyring). Suitable
+		// for local devnets and automation, not for production key material.
+		b, err := NewEncryptedFileBackend(dataDir)
+		if err != nil {
+			return nil, err
+		}
+		b.SetPassphrase("test")
+		return b, nil
 	default:
 		return nil, fmt.Errorf("unknown keyring backend: %s", backendType)
 	}
