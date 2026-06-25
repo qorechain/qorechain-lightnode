@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -233,50 +235,138 @@ func (d *Daemon) Logger() *slog.Logger {
 
 // heartbeatLoop submits periodic heartbeat transactions to prove node liveness.
 func (d *Daemon) heartbeatLoop(ctx context.Context) {
-	// Default heartbeat every 100 blocks (~10 min at 6s blocks)
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-
-	// Get operator address
-	keyInfo, err := d.keys.Get(d.cfg.KeyName)
-	if err != nil {
-		d.logger.Error("heartbeat loop: cannot get operator key", "error", err)
+	hb := d.cfg.Heartbeat
+	if !hb.Enabled || hb.QorechaindPath == "" {
+		d.logger.Info("on-chain heartbeats disabled; set [heartbeat] enabled + qorechaind_path to enable",
+			"note", "the chain is PQC-required, so heartbeats are submitted via the qorechaind CLI signer")
 		return
 	}
 
+	keyName := hb.KeyName
+	if keyName == "" {
+		keyName = d.cfg.KeyName
+	}
+
+	check, err := time.ParseDuration(hb.CheckInterval)
+	if err != nil || check <= 0 {
+		check = 60 * time.Second
+	}
+	intervalBlocks := hb.IntervalBlocks
+	if intervalBlocks <= 0 {
+		intervalBlocks = 1000
+	}
+
+	ticker := time.NewTicker(check)
+	defer ticker.Stop()
+
+	// The chain rate-limits heartbeats (ErrHeartbeatTooEarly) to at most one per
+	// `heartbeat_interval` blocks, and marks a node inactive after interval+grace
+	// blocks with no heartbeat. Pace by height: submit when at least
+	// `intervalBlocks` blocks have elapsed since our last submission. lastSubmit=0
+	// makes the first eligible tick fire promptly so a fresh node goes active.
+	var lastSubmit int64
+	due := func() bool {
+		h := d.lc.LatestHeight()
+		if h == 0 {
+			return false
+		}
+		if lastSubmit == 0 || h-lastSubmit >= intervalBlocks {
+			lastSubmit = h
+			return true
+		}
+		return false
+	}
+
+	if due() {
+		d.submitHeartbeatCLI(ctx, keyName)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			height := d.lc.LatestHeight()
-			d.logger.Info("submitting heartbeat", "latest_height", height)
-
-			msg := client.MsgHeartbeat{
-				Type:     lightnodeMsgTypeHeartbeat,
-				Operator: keyInfo.Address,
+			if due() {
+				d.submitHeartbeatCLI(ctx, keyName)
 			}
-
-			resp, err := d.txBuilder.BuildAndBroadcast(ctx, msg)
-			if err != nil {
-				d.logger.Warn("heartbeat tx failed", "error", err)
-				continue
-			}
-
-			if resp.TxResponse.Code != 0 {
-				d.logger.Warn("heartbeat tx rejected",
-					"code", resp.TxResponse.Code,
-					"log", resp.TxResponse.RawLog,
-				)
-				continue
-			}
-
-			d.logger.Info("heartbeat submitted",
-				"tx_hash", resp.TxResponse.TxHash,
-				"height", resp.TxResponse.Height,
-			)
 		}
 	}
+}
+
+// submitHeartbeatCLI builds, PQC-cosigns and broadcasts a lightnode heartbeat by
+// driving the qorechaind CLI pipeline (tx lightnode heartbeat --generate-only ->
+// tx pqc cosign). The chain is PQC-required, so a hybrid Dilithium-5 signature is
+// mandatory; reusing the node binary's proven signer avoids re-implementing the
+// protobuf-tx + hybrid-signing stack inside this minimal-dependency client.
+func (d *Daemon) submitHeartbeatCLI(ctx context.Context, keyName string) {
+	hb := d.cfg.Heartbeat
+	common := []string{
+		"--chain-id", d.cfg.ChainID,
+		"--node", toTCP(d.cfg.RPCAddr),
+		"--keyring-backend", d.cfg.KeyringBackend,
+		"--home", hb.QorechaindHome,
+	}
+
+	// 1. generate-only unsigned heartbeat
+	genArgs := append([]string{"tx", "lightnode", "heartbeat", "--from", keyName,
+		"--generate-only", "--gas", hb.Gas, "--fees", hb.Fees}, common...)
+	genCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	unsigned, err := exec.CommandContext(genCtx, hb.QorechaindPath, genArgs...).Output()
+	if err != nil {
+		d.logger.Warn("heartbeat: generate failed", "error", err)
+		return
+	}
+
+	tmp, err := os.CreateTemp("", "ln-heartbeat-*.json")
+	if err != nil {
+		d.logger.Warn("heartbeat: temp file failed", "error", err)
+		return
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(unsigned); err != nil {
+		tmp.Close()
+		d.logger.Warn("heartbeat: write unsigned failed", "error", err)
+		return
+	}
+	tmp.Close()
+
+	// 2. PQC-cosign (Dilithium-5 hybrid) + broadcast
+	cosignArgs := append([]string{"tx", "pqc", "cosign", tmp.Name(), "--from", keyName,
+		"--pqc-key", keyName, "-y", "-b", "sync", "-o", "json"}, common...)
+	csCtx, cancel2 := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel2()
+	out, err := exec.CommandContext(csCtx, hb.QorechaindPath, cosignArgs...).Output()
+	if err != nil {
+		d.logger.Warn("heartbeat: cosign/broadcast failed", "error", err)
+		return
+	}
+
+	var res struct {
+		TxHash string `json:"txhash"`
+		Code   int    `json:"code"`
+		RawLog string `json:"raw_log"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		d.logger.Warn("heartbeat: parse result failed", "error", err, "out", strings.TrimSpace(string(out)))
+		return
+	}
+	if res.Code != 0 {
+		d.logger.Warn("heartbeat rejected", "code", res.Code, "log", res.RawLog)
+		return
+	}
+	d.logger.Info("heartbeat submitted", "tx_hash", res.TxHash, "height", d.lc.LatestHeight())
+}
+
+// toTCP normalizes an http(s):// RPC address to the tcp:// scheme the cosmos
+// CLI expects for its --node flag.
+func toTCP(addr string) string {
+	if strings.HasPrefix(addr, "http://") {
+		return "tcp://" + strings.TrimPrefix(addr, "http://")
+	}
+	if strings.HasPrefix(addr, "https://") {
+		return "tcp://" + strings.TrimPrefix(addr, "https://")
+	}
+	return addr
 }
 
 // delegationSyncLoop periodically syncs delegation state from chain.

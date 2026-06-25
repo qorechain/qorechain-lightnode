@@ -43,9 +43,30 @@ type Config struct {
 	// Dashboard (UX only)
 	Dashboard DashboardConfig `toml:"dashboard"`
 
+	// Heartbeat (on-chain liveness)
+	Heartbeat HeartbeatConfig `toml:"heartbeat"`
+
 	// Logging
 	LogLevel  string `toml:"log_level"`  // debug, info, warn, error
 	LogFormat string `toml:"log_format"` // text, json
+}
+
+// HeartbeatConfig controls on-chain liveness heartbeats. The chain is
+// PQC-required: every cosmos tx needs a Dilithium-5 hybrid signature. Rather
+// than re-implement the full protobuf-tx + hybrid-signing stack inside this
+// minimal-dependency client, the daemon delegates heartbeats to the qorechaind
+// CLI's proven "generate-only -> pqc cosign -> broadcast" pipeline. If no
+// qorechaind binary is configured, on-chain heartbeats are skipped and the node
+// still runs light-client sync, telemetry and the dashboard.
+type HeartbeatConfig struct {
+	Enabled        bool   `toml:"enabled"`         // submit on-chain heartbeats
+	CheckInterval  string `toml:"check_interval"`  // how often to check if a heartbeat is due, e.g. "60s"
+	IntervalBlocks int64  `toml:"interval_blocks"` // min blocks between heartbeats; match the chain's heartbeat_interval param (default 1000)
+	QorechaindPath string `toml:"qorechaind_path"` // path to the qorechaind binary
+	QorechaindHome string `toml:"qorechaind_home"` // keyring home holding the operator + PQC key
+	KeyName        string `toml:"key_name"`        // signing key (defaults to the top-level key_name)
+	Fees           string `toml:"fees"`            // e.g. "50000uqor"
+	Gas            string `toml:"gas"`             // e.g. "300000"
 }
 
 // DelegationConfig defines staking configuration.
@@ -105,6 +126,13 @@ func DefaultConfig() Config {
 		Dashboard: DashboardConfig{
 			Enabled:  false,
 			BindAddr: ":8420",
+		},
+		Heartbeat: HeartbeatConfig{
+			Enabled:        false, // opt-in: requires a configured qorechaind binary + keyring
+			CheckInterval:  "60s",
+			IntervalBlocks: 1000, // matches the chain's default heartbeat_interval param
+			Fees:           "50000uqor",
+			Gas:            "300000",
 		},
 		LogLevel:  "info",
 		LogFormat: "text",
