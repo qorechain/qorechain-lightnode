@@ -124,7 +124,7 @@ func DefaultConfig() Config {
 			TokenomicsInterval: "60s",
 		},
 		Dashboard: DashboardConfig{
-			Enabled:  false,
+			Enabled: false,
 			// Loopback, not ":8420". An empty host binds every interface, and the
 			// dashboard has no authentication: config, delegations and rewards
 			// would be readable by anyone who can reach the host. An operator who
