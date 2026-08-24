@@ -73,6 +73,10 @@ jobs:
           CGO_ENABLED: "0"
         run: go test ./...
 
+      # Only the binaries. The libqorepqc.so / .dylib pair that earlier releases
+      # carried is dead weight now that PQC is pure Go, and shipping it invites
+      # an operator to place a stale native library next to a binary that does
+      # not load one.
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -80,7 +84,6 @@ jobs:
           path: |
             lightnode-sx-*
             lightnode-ux-*
-            qorepqc.*
 
   publish:
     needs: release
@@ -90,6 +93,55 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      # An operator who downloads a node binary and cannot verify it is a
+      # supply-chain hole we opened ourselves. The build manifest additionally
+      # lets a downloads page be generated rather than hand-maintained; it
+      # deliberately carries NO network or chain id, because a tag means "this
+      # code exists", not "this is blessed for network N". Blessing happens in
+      # qore-lightnode-release.sh, per network, testnet first.
+      - name: Checksums and build manifest
+        run: |
+          set -euo pipefail
+          cd dist
+          ver="${GITHUB_REF_NAME#v}"
+          sha256sum lightnode-* > SHA256SUMS
+          python3 - "$ver" <<'PY' > lightnode-build.json
+          import hashlib, json, os, re, sys
+
+          ver = sys.argv[1]
+          artifacts = []
+          for name in sorted(os.listdir(".")):
+              m = re.fullmatch(r"lightnode-(sx|ux)-(linux|darwin|windows)-(amd64|arm64)(\.exe)?", name)
+              if not m:
+                  continue
+              edition, goos, goarch, _ = m.groups()
+              with open(name, "rb") as fh:
+                  digest = hashlib.sha256(fh.read()).hexdigest()
+              artifacts.append({
+                  "edition": edition,
+                  "os": goos,
+                  "arch": goarch,
+                  "filename": name,
+                  "sha256": digest,
+                  "sizeBytes": os.path.getsize(name),
+              })
+          print(json.dumps({
+              "component": "lightnode",
+              "version": ver,
+              "artifactCount": len(artifacts),
+              "artifacts": artifacts,
+          }, indent=2))
+          PY
+          # Two editions across six targets. A short count means a matrix leg
+          # failed while the release still succeeded, and a downloads page built
+          # from this manifest would quietly lose a platform.
+          count=$(python3 -c 'import json;print(json.load(open("lightnode-build.json"))["artifactCount"])')
+          if [ "$count" != "12" ]; then
+            echo "expected 12 artifacts, got $count"
+            exit 1
+          fi
+          echo "12 artifacts, checksums written"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
