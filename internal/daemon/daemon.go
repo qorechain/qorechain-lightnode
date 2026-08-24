@@ -70,7 +70,10 @@ func New(cfg config.Config) (*Daemon, error) {
 	txBuilder := client.NewTxBuilder(chain, keys, cfg.KeyName, cfg.ChainID)
 
 	// Light client
-	lc := lightclient.New(chain, store, logger)
+	lc, err := lightclient.New(chain, store, logger, cfg.WitnessAddrs)
+	if err != nil {
+		return nil, fmt.Errorf("light client: %w", err)
+	}
 
 	// Telemetry intervals
 	intervals, err := parseIntervals(cfg.Telemetry)

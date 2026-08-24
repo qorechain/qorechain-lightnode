@@ -70,3 +70,21 @@ func (c *Client) LatestBlock(ctx context.Context) (*BlockResponse, error) {
 	}
 	return &resp, nil
 }
+
+// BlockAt returns the block at a specific height over the consensus RPC, which
+// carries the block id hash. The REST gateway used by LatestBlock does not.
+func (c *Client) BlockAt(ctx context.Context, height int64) (*BlockAtResponse, error) {
+	var resp BlockAtResponse
+	url := fmt.Sprintf("%s/block?height=%d", c.rpcURL, height)
+	if err := c.get(ctx, url, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Result.BlockID.Hash == "" {
+		return nil, fmt.Errorf("block %d: response carried no block id hash", height)
+	}
+	return &resp, nil
+}
+
+// RPCURL reports the endpoint this client talks to, for messages that have to
+// name which source disagreed.
+func (c *Client) RPCURL() string { return c.rpcURL }

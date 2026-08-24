@@ -38,10 +38,10 @@ type ValidatorInfo struct {
 	Description struct {
 		Moniker string `json:"moniker"`
 	} `json:"description"`
-	Jailed bool `json:"jailed"`
-	Status          string `json:"status"`
-	Tokens          string `json:"tokens"`
-	Commission      struct {
+	Jailed     bool   `json:"jailed"`
+	Status     string `json:"status"`
+	Tokens     string `json:"tokens"`
+	Commission struct {
 		Rate string `json:"rate"`
 	} `json:"commission"`
 }
@@ -156,4 +156,24 @@ type TxBroadcastResponse struct {
 		TxHash string `json:"txhash"`
 		RawLog string `json:"raw_log"`
 	} `json:"tx_response"`
+}
+
+// BlockAtResponse is the consensus RPC /block reply. Unlike BlockResponse, which
+// comes from the REST gateway and carries only height and time, this one carries
+// the block id hash and the validator set hash - the two values a cross-check
+// has to compare, and the two the header table was storing empty.
+type BlockAtResponse struct {
+	Result struct {
+		BlockID struct {
+			Hash string `json:"hash"`
+		} `json:"block_id"`
+		Block struct {
+			Header struct {
+				Height         string `json:"height"`
+				Time           string `json:"time"`
+				ValidatorsHash string `json:"validators_hash"`
+				ChainID        string `json:"chain_id"`
+			} `json:"header"`
+		} `json:"block"`
+	} `json:"result"`
 }

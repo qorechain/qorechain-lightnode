@@ -1,7 +1,27 @@
+// Package lightclient follows the chain's headers.
+//
+// It is NOT a light client in the protocol sense, and the name is retained only
+// because it is load-bearing across the config file, the daemon and the
+// dashboard. It does not verify commit signatures against the validator set, it
+// does not track validator set transitions, and it does not enforce a trust
+// period. A security audit in August 2026 called the original version a
+// "trusted RPC mirror", and that was accurate: it asked one endpoint for the
+// height and believed the answer.
+//
+// What it does now is corroborate. The same height is fetched from the primary
+// and from every configured witness, and a header is stored only when they
+// return the same block hash. That raises the bar from "compromise one
+// endpoint" to "compromise every configured endpoint, consistently and at the
+// same time". It does not reach the bar of verifying consensus, and Assurance
+// reports which of the two an operator is actually running.
+//
+// The honest upgrade is a real light client. Until then, do not describe this
+// as verifying the chain.
 package lightclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -26,18 +46,51 @@ type LightClient struct {
 	store  *db.DB
 	logger *slog.Logger
 
+	cc *crossChecker
+
 	mu           sync.RWMutex
 	latestHeight int64
 	syncing      bool
+	assurance    Assurance
+	sources      int
+	lastConflict string
 }
 
 // New creates a new light client.
-func New(chain *client.Client, store *db.DB, logger *slog.Logger) *LightClient {
-	return &LightClient{
-		chain:  chain,
-		store:  store,
-		logger: logger,
+func New(chain *client.Client, store *db.DB, logger *slog.Logger, witnesses []string) (*LightClient, error) {
+	cc, err := newCrossChecker(chain, witnesses)
+	if err != nil {
+		return nil, err
 	}
+	if len(cc.witnesses) == 0 {
+		logger.Warn("no witness endpoints configured: headers come from a single source, " +
+			"which can fabricate every value you see. Set witness_addrs to at least one " +
+			"independently operated RPC.")
+	}
+	return &LightClient{
+		chain:     chain,
+		store:     store,
+		logger:    logger,
+		cc:        cc,
+		assurance: AssuranceTrusted,
+	}, nil
+}
+
+// Assurance reports how the most recent header was established: believed from a
+// single source, or corroborated across independent ones.
+func (lc *LightClient) Assurance() (Assurance, int) {
+	lc.mu.RLock()
+	defer lc.mu.RUnlock()
+	return lc.assurance, lc.sources
+}
+
+// LastConflict returns the most recent disagreement between endpoints, or the
+// empty string. A non-empty value means one of the configured sources lied, and
+// the operator should find out which before trusting anything the node shows.
+func (lc *LightClient) LastConflict() string {
+	lc.mu.RLock()
+	defer lc.mu.RUnlock()
+	return lc.lastConflict
 }
 
 // Start begins the header sync loop.
@@ -82,9 +135,18 @@ func (lc *LightClient) syncLatest(ctx context.Context) error {
 		return fmt.Errorf("fetching node status: %w", err)
 	}
 
-	height, err := strconv.ParseInt(status.Result.SyncInfo.LatestBlockHeight, 10, 64)
+	tip, err := strconv.ParseInt(status.Result.SyncInfo.LatestBlockHeight, 10, 64)
 	if err != nil {
 		return fmt.Errorf("parsing block height: %w", err)
+	}
+
+	// One block behind the tip. Endpoints reach a new height at slightly
+	// different moments, so comparing the very latest block would report a
+	// disagreement every time one witness is a beat behind - and a check that
+	// cries wolf every few seconds is one an operator learns to ignore.
+	height := tip - 1
+	if height < 1 {
+		return nil
 	}
 
 	lc.mu.Lock()
@@ -94,22 +156,37 @@ func (lc *LightClient) syncLatest(ctx context.Context) error {
 	}
 	lc.mu.Unlock()
 
-	blockTime, _ := time.Parse(time.RFC3339Nano, status.Result.SyncInfo.LatestBlockTime)
-
-	header := Header{
-		Height: height,
-		Time:   blockTime,
+	checked, err := lc.cc.headerAt(ctx, height)
+	if err != nil {
+		var conflict *disagreementError
+		if errors.As(err, &conflict) {
+			// Nothing is stored. One of the endpoints is lying, and which one
+			// cannot be decided from here - so refuse to pick, and say so
+			// loudly enough that it is not mistaken for a network blip.
+			lc.mu.Lock()
+			lc.lastConflict = conflict.Error()
+			lc.mu.Unlock()
+			lc.logger.Error("REFUSING HEADER: configured endpoints disagree",
+				"detail", conflict.Error(),
+				"action", "one of these sources is not telling the truth; do not trust displayed state until resolved")
+			return err
+		}
+		return err
 	}
 
-	if err := lc.storeHeader(header); err != nil {
+	if err := lc.storeHeader(checked.Header); err != nil {
 		return fmt.Errorf("storing header: %w", err)
 	}
 
 	lc.mu.Lock()
 	lc.latestHeight = height
+	lc.assurance = checked.Assurance
+	lc.sources = checked.Sources
+	lc.lastConflict = ""
 	lc.mu.Unlock()
 
-	lc.logger.Debug("synced header", "height", height)
+	lc.logger.Debug("synced header", "height", height,
+		"hash", checked.Header.Hash, "assurance", checked.Assurance, "sources", checked.Sources)
 	return nil
 }
 
@@ -182,4 +259,9 @@ func (lc *LightClient) RecentHeaders(limit int) ([]Header, error) {
 		headers = append(headers, h)
 	}
 	return headers, nil
+}
+
+// parseBlockTime parses a consensus header timestamp.
+func parseBlockTime(s string) (time.Time, error) {
+	return time.Parse(time.RFC3339Nano, s)
 }
