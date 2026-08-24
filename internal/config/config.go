@@ -125,7 +125,12 @@ func DefaultConfig() Config {
 		},
 		Dashboard: DashboardConfig{
 			Enabled:  false,
-			BindAddr: ":8420",
+			// Loopback, not ":8420". An empty host binds every interface, and the
+			// dashboard has no authentication: config, delegations and rewards
+			// would be readable by anyone who can reach the host. An operator who
+			// wants network access sets it explicitly, which is a decision rather
+			// than a default.
+			BindAddr: "127.0.0.1:8420",
 		},
 		Heartbeat: HeartbeatConfig{
 			Enabled:        false, // opt-in: requires a configured qorechaind binary + keyring

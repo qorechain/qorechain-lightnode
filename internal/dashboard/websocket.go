@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,7 +53,20 @@ func NewHub(logger *slog.Logger) *Hub {
 }
 
 // HandleWS upgrades an HTTP request to a WebSocket connection.
+//
+// Origin is checked first. golang.org/x/net/websocket does not check it, and the
+// same-origin policy does not apply to WebSocket handshakes: without this, any
+// page the operator happened to have open in a browser could connect to the node
+// on localhost and read the telemetry stream. Binding to loopback does not help
+// there - the browser is on the loopback interface too.
 func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
+	if origin := r.Header.Get("Origin"); !originAllowed(origin, r.Host) {
+		h.logger.Warn("websocket handshake rejected: cross-origin",
+			"origin", origin, "host", r.Host)
+		http.Error(w, "cross-origin websocket handshake rejected", http.StatusForbidden)
+		return
+	}
+
 	handler := websocket.Handler(func(conn *websocket.Conn) {
 		c := &wsClient{
 			hub:  h,
@@ -171,4 +186,22 @@ func (c *wsClient) writePump() {
 			}
 		}
 	}
+}
+
+// originAllowed reports whether a handshake carrying this Origin may proceed.
+//
+// An absent Origin is allowed: non-browser clients - the CLI, curl, a monitoring
+// probe - do not send one, and they are not the threat this guards against. The
+// attack needs a browser, and browsers always send it.
+func originAllowed(origin, host string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	// Compare host:port. A page served from the dashboard itself matches; one
+	// served from anywhere else does not, whatever it claims to be.
+	return strings.EqualFold(u.Host, host)
 }

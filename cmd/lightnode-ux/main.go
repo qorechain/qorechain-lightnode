@@ -59,7 +59,8 @@ func loadConfig() config.Config {
 	cfg.NodeType = "ux"
 	cfg.Dashboard.Enabled = true
 	if cfg.Dashboard.BindAddr == "" {
-		cfg.Dashboard.BindAddr = ":8420"
+		// Loopback by default; see config.DefaultConfig for why.
+		cfg.Dashboard.BindAddr = "127.0.0.1:8420"
 	}
 	return cfg
 }
@@ -104,7 +105,10 @@ func startCmd() *cobra.Command {
 			ctx := context.Background()
 
 			fmt.Fprintf(os.Stderr, "QoreChain UX Light Node v%s starting...\n", version)
-			fmt.Fprintf(os.Stderr, "Dashboard: http://localhost%s\n", cfg.Dashboard.BindAddr)
+			fmt.Fprintf(os.Stderr, "Dashboard: %s\n", dashboard.DisplayURL(cfg.Dashboard.BindAddr))
+			if warning := dashboard.ExposureWarning(cfg.Dashboard.BindAddr); warning != "" {
+				fmt.Fprint(os.Stderr, warning)
+			}
 
 			// Start dashboard server in background
 			errCh := make(chan error, 1)
