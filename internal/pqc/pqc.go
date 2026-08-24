@@ -1,130 +1,95 @@
-//go:build cgo
-
+// Package pqc provides Dilithium-5 (ML-DSA-87, FIPS-204) signing for the light
+// node.
+//
+// This is a pure-Go implementation backed by cloudflare/circl. It replaces the
+// previous cgo bridge to libqorepqc, which had three problems:
+//
+//   - It needed a native library per platform. lib/windows_amd64 and
+//     lib/darwin_amd64 never existed, so the release workflow built those
+//     targets with CGO_ENABLED=0 and silently shipped binaries whose keygen,
+//     sign and verify all returned errors. Operators on Windows and macOS could
+//     start the node and watch the dashboard, but could not register on chain.
+//   - A shipped library can go stale against the chain. It had before: the
+//     bundled build predated the FIPS-204 migration and produced signatures the
+//     chain rejected with code 21.
+//   - It was slower. Measured on this chain, circl verifies in ~0.033 ms against
+//     ~0.290 ms through the FFI.
+//
+// Interoperability with the chain is not assumed. It was proven on 2026-08-24
+// against libqorepqc.so sha256 9d335cc3... — the build running on mainnet — in
+// both directions: signatures produced here verify there, signatures produced
+// there verify here, and both reject tampered input. See TestChainInterop.
 package pqc
 
-/*
-#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../lib/darwin_arm64 -lqorepqc
-#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../lib/darwin_amd64 -lqorepqc
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../lib/linux_amd64 -lqorepqc
-#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../lib/linux_arm64 -lqorepqc
-
-#include "pqc.h"
-#include <stdlib.h>
-*/
-import "C"
-
 import (
+	"crypto/rand"
 	"fmt"
-	"unsafe"
+
+	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
 )
 
-// Dilithium-5 (ML-DSA-87) constant sizes. These match the libqorepqc
-// canonical sizes; the lib's keygen returns these via the OUT length
-// pointers, but the constants give us tight upfront buffer sizing.
+// Dilithium-5 (ML-DSA-87) constant sizes, fixed by FIPS-204.
 const (
-	DilithiumPublicKeySize  = 2592
-	DilithiumPrivateKeySize = 4896
-	DilithiumSignatureSize  = 4627
+	DilithiumPublicKeySize  = mldsa87.PublicKeySize  // 2592
+	DilithiumPrivateKeySize = mldsa87.PrivateKeySize // 4896
+	DilithiumSignatureSize  = mldsa87.SignatureSize  // 4627
 )
 
-// DilithiumKeygen generates a new Dilithium-5 keypair.
-//
-// The libqorepqc FFI is:
-//
-//	int32_t qore_dilithium_keygen(uint8_t *pubkey_out, size_t *pubkey_len,
-//	                              uint8_t *privkey_out, size_t *privkey_len);
-//
-// pubkey_len and privkey_len are IN+OUT: callers pass the buffer capacity,
-// the lib writes the actual key size back. Returns 0 on success.
-func DilithiumKeygen() (pubkey []byte, privkey []byte, err error) {
-	pk := make([]byte, DilithiumPublicKeySize)
-	sk := make([]byte, DilithiumPrivateKeySize)
-	pkLen := C.size_t(len(pk))
-	skLen := C.size_t(len(sk))
+// signCtx is the FIPS-204 context string. The chain signs with an empty
+// context, so anything else here produces signatures it will reject.
+var signCtx []byte
 
-	rc := C.qore_dilithium_keygen(
-		(*C.uint8_t)(unsafe.Pointer(&pk[0])),
-		&pkLen,
-		(*C.uint8_t)(unsafe.Pointer(&sk[0])),
-		&skLen,
-	)
-	if rc != 0 {
-		return nil, nil, fmt.Errorf("dilithium keygen failed: code %d", int32(rc))
+// DilithiumKeygen generates a new ML-DSA-87 keypair, returning both halves in
+// their packed FIPS-204 encoding.
+func DilithiumKeygen() (pubkey []byte, privkey []byte, err error) {
+	pk, sk, err := mldsa87.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dilithium keygen: %w", err)
 	}
-	return pk[:pkLen], sk[:skLen], nil
+	return pk.Bytes(), sk.Bytes(), nil
 }
 
-// DilithiumSign signs a message with a Dilithium-5 private key.
-//
-// The libqorepqc FFI is:
-//
-//	int32_t qore_dilithium_sign(const uint8_t *privkey, size_t privkey_len,
-//	                            const uint8_t *message, size_t message_len,
-//	                            uint8_t *sig_out, size_t *sig_len);
-//
-// sig_len is IN+OUT (capacity → actual). Returns 0 on success.
+// DilithiumSign signs message with a packed private key.
 func DilithiumSign(privkey, message []byte) ([]byte, error) {
+	// FIPS-204 permits signing an empty message, but nothing in this codebase
+	// ever means to: an empty message here is a caller that passed nothing.
+	// The previous FFI rejected it, and that guard is worth keeping.
+	if len(message) == 0 {
+		return nil, fmt.Errorf("dilithium sign: empty message")
+	}
 	if len(privkey) != DilithiumPrivateKeySize {
-		return nil, fmt.Errorf("invalid private key size: got %d, want %d",
+		return nil, fmt.Errorf("dilithium sign: private key is %d bytes, want %d",
 			len(privkey), DilithiumPrivateKeySize)
 	}
-	if len(message) == 0 {
-		return nil, fmt.Errorf("dilithium sign: message must not be empty")
-	}
+	var buf [DilithiumPrivateKeySize]byte
+	copy(buf[:], privkey)
+	var sk mldsa87.PrivateKey
+	sk.Unpack(&buf)
 
 	sig := make([]byte, DilithiumSignatureSize)
-	sigLen := C.size_t(len(sig))
-
-	rc := C.qore_dilithium_sign(
-		(*C.uint8_t)(unsafe.Pointer(&privkey[0])),
-		C.size_t(len(privkey)),
-		(*C.uint8_t)(unsafe.Pointer(&message[0])),
-		C.size_t(len(message)),
-		(*C.uint8_t)(unsafe.Pointer(&sig[0])),
-		&sigLen,
-	)
-	if rc != 0 {
-		return nil, fmt.Errorf("dilithium sign failed: code %d", int32(rc))
+	// randomized=true is the FIPS-204 hedged variant: it mixes fresh entropy
+	// into the signature. Verification is unaffected either way.
+	if err := mldsa87.SignTo(&sk, message, signCtx, true, sig); err != nil {
+		return nil, fmt.Errorf("dilithium sign: %w", err)
 	}
-	return sig[:sigLen], nil
+	return sig, nil
 }
 
-// DilithiumVerify verifies a Dilithium-5 signature.
-//
-// The libqorepqc FFI is:
-//
-//	int32_t qore_dilithium_verify(const uint8_t *pubkey, size_t pubkey_len,
-//	                              const uint8_t *message, size_t message_len,
-//	                              const uint8_t *signature, size_t sig_len);
-//
-// Returns 1 on valid, 0 on invalid, negative on error. (NOT a standard
-// success=0 convention — this is the canonical 'verify result' shape.)
+// DilithiumVerify reports whether signature is valid for message under pubkey.
+// A malformed input is an error; a well-formed but wrong signature is (false, nil).
 func DilithiumVerify(pubkey, message, signature []byte) (bool, error) {
 	if len(pubkey) != DilithiumPublicKeySize {
-		return false, fmt.Errorf("invalid public key size: got %d, want %d",
+		return false, fmt.Errorf("dilithium verify: public key is %d bytes, want %d",
 			len(pubkey), DilithiumPublicKeySize)
 	}
-	if len(signature) == 0 {
-		return false, fmt.Errorf("dilithium verify: signature must not be empty")
+	if len(signature) != DilithiumSignatureSize {
+		return false, fmt.Errorf("dilithium verify: signature is %d bytes, want %d",
+			len(signature), DilithiumSignatureSize)
 	}
-	if len(message) == 0 {
-		return false, fmt.Errorf("dilithium verify: message must not be empty")
-	}
+	var buf [DilithiumPublicKeySize]byte
+	copy(buf[:], pubkey)
+	var pk mldsa87.PublicKey
+	pk.Unpack(&buf)
 
-	rc := C.qore_dilithium_verify(
-		(*C.uint8_t)(unsafe.Pointer(&pubkey[0])),
-		C.size_t(len(pubkey)),
-		(*C.uint8_t)(unsafe.Pointer(&message[0])),
-		C.size_t(len(message)),
-		(*C.uint8_t)(unsafe.Pointer(&signature[0])),
-		C.size_t(len(signature)),
-	)
-	switch {
-	case rc == 1:
-		return true, nil
-	case rc == 0:
-		return false, nil
-	default:
-		return false, fmt.Errorf("dilithium verify failed: code %d", int32(rc))
-	}
+	return mldsa87.Verify(&pk, message, signCtx, signature), nil
 }

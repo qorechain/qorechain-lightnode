@@ -16,19 +16,16 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            pqc_lib: lib/linux_amd64/libqorepqc.so
           - goos: linux
             goarch: arm64
-            pqc_lib: lib/linux_arm64/libqorepqc.so
           - goos: darwin
             goarch: amd64
-            pqc_lib: lib/darwin_amd64/libqorepqc.dylib
           - goos: darwin
             goarch: arm64
-            pqc_lib: lib/darwin_arm64/libqorepqc.dylib
           - goos: windows
             goarch: amd64
-            pqc_lib: lib/windows_amd64/qorepqc.dll
+          - goos: windows
+            goarch: arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -37,38 +34,44 @@ jobs:
         with:
           go-version: "1.26"
 
-      - name: Setup cross-compilation
-        if: matrix.goos == 'linux' && matrix.goarch == 'arm64'
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Build SX
+      # No cross-compilation toolchain and no native libraries: the PQC
+      # implementation is pure Go (cloudflare/circl), so every target builds
+      # from any host with CGO off. Do not reintroduce CGO here — that is what
+      # silently shipped Windows and macOS binaries whose keygen, sign and
+      # verify all returned errors.
+      - name: Build
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.goos == 'linux' && '1' || '0' }}
-          CC: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
+          CGO_ENABLED: "0"
         run: |
+          set -euo pipefail
           ext=""
           if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
-          go build -o lightnode-sx-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/lightnode-sx/
+          suffix="${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
+          for edition in sx ux; do
+            out="lightnode-${edition}-${suffix}"
+            go build -trimpath -ldflags "-s -w" -o "$out" "./cmd/lightnode-${edition}/"
+            # Fail loudly rather than uploading something that is not there.
+            test -s "$out"
+            echo "built $out ($(du -h "$out" | cut -f1))"
+          done
 
-      - name: Build UX
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: ${{ matrix.goos == 'linux' && '1' || '0' }}
-          CC: ${{ matrix.goos == 'linux' && matrix.goarch == 'arm64' && 'aarch64-linux-gnu-gcc' || '' }}
+      - name: Verify the binary carries no native dependency
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         run: |
-          ext=""
-          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
-          go build -o lightnode-ux-${{ matrix.goos }}-${{ matrix.goarch }}${ext} ./cmd/lightnode-ux/
-
-      - name: Package PQC library
-        run: |
-          if [ -f "${{ matrix.pqc_lib }}" ]; then
-            cp "${{ matrix.pqc_lib }}" .
+          set -euo pipefail
+          if ldd lightnode-sx-linux-amd64 2>&1 | grep -q "libqorepqc"; then
+            echo "binary still links libqorepqc - CGO leaked back in"
+            exit 1
           fi
+          echo "no libqorepqc linkage"
+
+      - name: Run tests
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -77,7 +80,6 @@ jobs:
           path: |
             lightnode-sx-*
             lightnode-ux-*
-            libqorepqc.*
             qorepqc.*
 
   publish:

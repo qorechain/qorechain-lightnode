@@ -167,8 +167,9 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 	prn("Step 1 — PQC stack check\n\n")
 	if err := runSelftest(out); err != nil {
 		prn("\nThe PQC stack failed its self-test. Refusing to continue ")
-		prn("onboarding — fix the underlying issue (usually a missing or ")
-		prn("incompatible libqorepqc binary) and re-run 'onboard'.\n")
+		prn("onboarding. This build has no external dependencies, so a ")
+		prn("failure here means a corrupted binary: re-download it and ")
+		prn("re-run 'onboard'.\n")
 		return err
 	}
 	prn("\n")

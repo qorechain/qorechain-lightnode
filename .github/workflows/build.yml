@@ -16,25 +16,24 @@ jobs:
         with:
           go-version: "1.26"
 
+      # CGO off everywhere: PQC is pure Go, so there is no library to locate.
       - name: Vet
-        run: CGO_ENABLED=1 go vet ./internal/config/... ./internal/db/... ./internal/client/...
-        env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/lib/linux_amd64
-
-      - name: Build SX
-        run: CGO_ENABLED=1 go build -o /dev/null ./cmd/lightnode-sx/
-        env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/lib/linux_amd64
-
-      - name: Build UX
-        run: CGO_ENABLED=1 go build -o /dev/null ./cmd/lightnode-ux/
-        env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/lib/linux_amd64
+        run: CGO_ENABLED=0 go vet ./...
 
       - name: Test
-        run: CGO_ENABLED=1 go test ./...
-        env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/lib/linux_amd64
+        run: CGO_ENABLED=0 go test ./...
+
+      - name: Build both editions for every supported platform
+        run: |
+          set -euo pipefail
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os="${target%%/*}"; arch="${target##*/}"
+            for edition in sx ux; do
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+                go build -o /dev/null "./cmd/lightnode-${edition}/"
+            done
+            echo "ok $target"
+          done
 
   lint:
     runs-on: ubuntu-latest

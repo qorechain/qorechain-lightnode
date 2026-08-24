@@ -10,8 +10,9 @@ RUN go mod download
 # Copy source
 COPY . .
 
-# Build SX binary with CGO for PQC native library
-RUN CGO_ENABLED=1 go build -o /build/lightnode-sx ./cmd/lightnode-sx/
+# Pure-Go build: the PQC implementation is cloudflare/circl, so there is no
+# native library to link or copy into the runtime image.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /build/lightnode-sx ./cmd/lightnode-sx/
 
 # Runtime stage
 FROM debian:bookworm-slim
@@ -21,7 +22,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/lightnode-sx /usr/local/bin/lightnode-sx
-COPY --from=builder /build/lib/linux_amd64/libqorepqc.so /usr/lib/libqorepqc.so
 RUN ldconfig
 
 RUN mkdir -p /root/.qorechain-lightnode

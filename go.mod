@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/cloudflare/circl v1.6.1
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.49.0
