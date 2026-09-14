@@ -50,6 +50,12 @@ func NewEncryptedFileBackend(dataDir string) (*EncryptedFileBackend, error) {
 	return &EncryptedFileBackend{dir: dir}, nil
 }
 
+// errEmptyPassphrase is returned by every operation on a file backend that has no
+// passphrase. Encrypting under an empty passphrase protects nothing, and the
+// defence against forgetting to set one has to live here, at the cipher, not only
+// in the constructor that a future caller might bypass.
+var errEmptyPassphrase = fmt.Errorf("keystore passphrase is empty; refusing to encrypt or decrypt")
+
 // SetPassphrase sets the encryption passphrase.
 func (b *EncryptedFileBackend) SetPassphrase(passphrase string) {
 	b.passphrase = []byte(passphrase)
@@ -60,6 +66,9 @@ func (b *EncryptedFileBackend) keystorePath() string {
 }
 
 func (b *EncryptedFileBackend) loadEntries() (map[string]keyEntry, error) {
+	if len(b.passphrase) == 0 {
+		return nil, errEmptyPassphrase
+	}
 	data, err := os.ReadFile(b.keystorePath())
 	if os.IsNotExist(err) {
 		return make(map[string]keyEntry), nil
@@ -96,6 +105,9 @@ func (b *EncryptedFileBackend) loadEntries() (map[string]keyEntry, error) {
 }
 
 func (b *EncryptedFileBackend) saveEntries(entries map[string]keyEntry) error {
+	if len(b.passphrase) == 0 {
+		return errEmptyPassphrase
+	}
 	plaintext, err := json.Marshal(entries)
 	if err != nil {
 		return err

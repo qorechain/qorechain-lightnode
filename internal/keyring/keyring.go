@@ -2,6 +2,7 @@ package keyring
 
 import (
 	"fmt"
+	"os"
 )
 
 // KeyType identifies the cryptographic algorithm.
@@ -39,11 +40,33 @@ type Backend interface {
 	Get(name string) (KeyInfo, error)
 }
 
+// PassphraseEnv is the environment variable the file backend reads its passphrase
+// from. It is read at open time and never written anywhere.
+const PassphraseEnv = "QORE_LIGHTNODE_KEYRING_PASSPHRASE"
+
 // New creates a keyring backend based on the type.
 func New(backendType string, dataDir string) (Backend, error) {
 	switch backendType {
 	case "file":
-		return NewEncryptedFileBackend(dataDir)
+		// THE FILE BACKEND REQUIRES A PASSPHRASE. It used to be created with none,
+		// and the only caller that ever set one was the "test" backend below, so the
+		// production keystore was encrypted under an empty key while the development
+		// one had a real one. AES-GCM under an argon2 derivation of an empty
+		// passphrase is a keystore that opens for anyone holding the file, and a
+		// working recovery of a 4896-byte ML-DSA-87 secret key from such a file was
+		// supplied to us. The passphrase comes from the environment so an unattended
+		// daemon can start; an empty one is refused rather than defaulted.
+		b, err := NewEncryptedFileBackend(dataDir)
+		if err != nil {
+			return nil, err
+		}
+		pass := os.Getenv(PassphraseEnv)
+		if pass == "" {
+			return nil, fmt.Errorf("keyring backend %q needs a passphrase: set %s "+
+				"(use the \"test\" backend only for local devnets)", backendType, PassphraseEnv)
+		}
+		b.SetPassphrase(pass)
+		return b, nil
 	case "os":
 		return NewOSKeychainBackend()
 	case "test":
