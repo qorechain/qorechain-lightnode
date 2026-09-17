@@ -239,13 +239,7 @@ func (b *EncryptedFileBackend) Sign(name string, message []byte) ([]byte, error)
 		return nil, fmt.Errorf("key %q not found", name)
 	}
 
-	switch entry.Info.Type {
-	case KeyTypeDilithium5:
-		// Will use PQC package when wired
-		return nil, fmt.Errorf("dilithium5 signing requires PQC library")
-	default:
-		return nil, fmt.Errorf("unsupported key type for signing: %s", entry.Info.Type)
-	}
+	return signEntry(entry, message)
 }
 
 func (b *EncryptedFileBackend) List() ([]KeyInfo, error) {

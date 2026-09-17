@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/qorechain/qorechain-lightnode/internal/client"
 	"github.com/qorechain/qorechain-lightnode/internal/config"
 	"github.com/qorechain/qorechain-lightnode/internal/daemon"
 	"github.com/qorechain/qorechain-lightnode/internal/keyring"
@@ -153,6 +154,36 @@ func statusCmd() *cobra.Command {
 			fmt.Fprintf(w, "Catching Up:\t%v\n", status.Result.SyncInfo.CatchingUp)
 			fmt.Fprintf(w, "LC Synced Height:\t%d\n", d.LightClient().LatestHeight())
 			fmt.Fprintf(w, "LC Syncing:\t%v\n", d.LightClient().IsSyncing())
+			if ok, reason := d.Signer(); ok {
+				fmt.Fprintf(w, "Signer:\tqorechaind available\n")
+			} else {
+				fmt.Fprintf(w, "Signer:\tunavailable (%s)\n", reason)
+			}
+			if cfg.OperatorAddress == "" {
+				fmt.Fprintf(w, "Operator:\tnot set (operator_address in config.toml)\n")
+			} else {
+				fmt.Fprintf(w, "Operator:\t%s\n", cfg.OperatorAddress)
+				lic, err := d.Chain().LicenseCheck(ctx, cfg.OperatorAddress, client.FeatureLightNodeOperator)
+				switch {
+				case err != nil:
+					fmt.Fprintf(w, "Licence:\tunknown (%v)\n", err)
+				case !lic.Found:
+					fmt.Fprintf(w, "Licence:\tnone - buy one at https://dashboard.qorechain.io -> Tools -> Buy License\n")
+				case !lic.Active:
+					fmt.Fprintf(w, "Licence:\tsuspended\n")
+				default:
+					fmt.Fprintf(w, "Licence:\tactive\n")
+				}
+				registered, node, err := d.Chain().LightNodeRegistration(ctx, cfg.OperatorAddress)
+				switch {
+				case err != nil:
+					fmt.Fprintf(w, "Registration:\tunknown (%v)\n", err)
+				case !registered:
+					fmt.Fprintf(w, "Registration:\tnot registered (run: lightnode-sx register)\n")
+				default:
+					fmt.Fprintf(w, "Registration:\t%s, last heartbeat at height %s\n", node.LightNode.Status, node.LightNode.LastHeartbeat)
+				}
+			}
 			w.Flush()
 			return nil
 		},
@@ -350,8 +381,9 @@ func keysExportCmd() *cobra.Command {
 func registerCmd() *cobra.Command {
 	var nodeType, ver string
 	cmd := &cobra.Command{
-		Use:   "register",
-		Short: "Print the chain commands that register this node",
+		Use:          "register",
+		Short:        "Print the chain commands that register this node",
+		SilenceUsage: true, // the refusal is the answer; usage text buries it
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
@@ -371,7 +403,33 @@ func registerCmd() *cobra.Command {
 			if err := config.ValidateOperatorAddress(cfg.OperatorAddress); err != nil {
 				return err
 			}
+
+			// The chain refuses a registration without an active licence, so ask
+			// it first and say plainly where the licence comes from, instead of
+			// printing commands the chain will reject.
+			ctx := context.Background()
+			lcd := cfg.APIAddr
+			if lcd == "" {
+				lcd = client.DeriveLCDURL(cfg.RPCAddr)
+			}
+			chain := client.New(cfg.RPCAddr, lcd)
+			lic, err := chain.LicenseCheck(ctx, cfg.OperatorAddress, client.FeatureLightNodeOperator)
+			if err != nil {
+				return fmt.Errorf("checking the licence on %s: %w", cfg.RPCAddr, err)
+			}
+			if blocked, msg := daemon.LicenceGate(cfg.OperatorAddress, lic); blocked {
+				return errors.New(msg)
+			}
+			if registered, node, err := chain.LightNodeRegistration(ctx, cfg.OperatorAddress); err != nil {
+				return fmt.Errorf("checking the registration on %s: %w", cfg.RPCAddr, err)
+			} else if registered {
+				fmt.Printf("Already registered: %s is a %s node, status %s, last heartbeat at height %s. Nothing to do.\n",
+					cfg.OperatorAddress, node.LightNode.NodeType, node.LightNode.Status, node.LightNode.LastHeartbeat)
+				return nil
+			}
+
 			pub := hex.EncodeToString(info.PubKey)
+			fmt.Printf("Licence:          active (lightnode_operator)\n")
 			fmt.Printf("Operator address: %s\n", cfg.OperatorAddress)
 			fmt.Printf("Node key:         %s (%s)\n", info.Name, info.Type)
 			fmt.Printf("Node type:        %s\n", nodeType)
@@ -388,7 +446,7 @@ func registerCmd() *cobra.Command {
 			fmt.Printf("     qorechaind tx pqc cosign register.json --from operator --pqc-key %s --chain-id %s\n", info.Name, cfg.ChainID)
 			fmt.Println()
 			fmt.Println("\"operator\" is the qorechaind key name holding " + cfg.OperatorAddress + "; adjust if yours differs.")
-			fmt.Println("Registration needs an active lightnode_operator licence on the operator address; the chain refuses it otherwise.")
+			fmt.Println("Once the registration is in a block, `lightnode-sx start` heartbeats on its own through qorechaind.")
 			return nil
 		},
 	}

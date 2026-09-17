@@ -40,6 +40,7 @@ type Config struct {
 	// to an account, it does not make one. Create the account with qorechaind,
 	// fund it, register the node's key on it, and put the address here.
 	OperatorAddress string `toml:"operator_address"`
+	APIAddr         string `toml:"api_addr"` // REST/LCD endpoint; empty = derived from rpc_addr (port 1317, or rpc. -> api.)
 
 	// Staking & Delegation
 	Delegation DelegationConfig `toml:"delegation"`
@@ -69,17 +70,19 @@ type HeartbeatConfig struct {
 	Enabled        bool   `toml:"enabled"`         // submit on-chain heartbeats
 	CheckInterval  string `toml:"check_interval"`  // how often to check if a heartbeat is due, e.g. "60s"
 	IntervalBlocks int64  `toml:"interval_blocks"` // min blocks between heartbeats; match the chain's heartbeat_interval param (default 1000)
-	QorechaindPath string `toml:"qorechaind_path"` // path to the qorechaind binary
-	QorechaindHome string `toml:"qorechaind_home"` // keyring home holding the operator + PQC key
-	KeyName        string `toml:"key_name"`        // signing key (defaults to the top-level key_name)
+	QorechaindPath string `toml:"qorechaind_path"` // path to the qorechaind binary; empty = look up "qorechaind" on PATH
+	QorechaindHome string `toml:"qorechaind_home"` // qorechaind home holding the operator key + pqc/<key>.dilithium; empty = ~/.qorechaind
+	KeyringBackend string `toml:"keyring_backend"` // qorechaind keyring backend (defaults to the top-level keyring_backend)
+	KeyName        string `toml:"key_name"`        // qorechaind key holding the operator account (defaults to the top-level key_name)
 	Fees           string `toml:"fees"`            // e.g. "50000uqor"
 	Gas            string `toml:"gas"`             // e.g. "300000"
 }
 
 // DelegationConfig defines staking configuration.
 type DelegationConfig struct {
-	AutoCompound     bool     `toml:"auto_compound"`
-	CompoundInterval string   `toml:"compound_interval"` // e.g. "1h"
+	AutoClaim        bool     `toml:"auto_claim"`        // claim accrued light node rewards into the operator wallet automatically
+	AutoCompound     bool     `toml:"auto_compound"`     // older name for auto_claim; the node never re-delegated and does not now
+	CompoundInterval string   `toml:"compound_interval"` // how often to check, e.g. "1h"
 	MinRewardClaim   string   `toml:"min_reward_claim"`  // minimum uqor to trigger claim
 	Validators       []string `toml:"validators"`        // validator addresses
 	SplitWeights     []int    `toml:"split_weights"`     // weights for multi-validator split
@@ -117,7 +120,10 @@ func DefaultConfig() Config {
 		KeyringBackend: "file",
 		KeyName:        "operator",
 		Delegation: DelegationConfig{
-			AutoCompound:     true,
+			// Off: claiming spends the operator's fee balance and needs the
+			// qorechaind signer; an operator turns it on knowingly.
+			AutoClaim:        false,
+			AutoCompound:     false,
 			CompoundInterval: "1h",
 			MinRewardClaim:   "1000000", // 1 QOR
 			RebalanceEnabled: true,
@@ -140,7 +146,11 @@ func DefaultConfig() Config {
 			BindAddr: "127.0.0.1:8420",
 		},
 		Heartbeat: HeartbeatConfig{
-			Enabled:        false, // opt-in: requires a configured qorechaind binary + keyring
+			// On: a registered node that does not heartbeat is marked inactive
+			// by the chain within 1,100 blocks. The loop needs qorechaind (on
+			// PATH or at qorechaind_path) and operator_address; without them it
+			// says so once and stays off rather than failing the start.
+			Enabled:        true,
 			CheckInterval:  "60s",
 			IntervalBlocks: 1000, // matches the chain's default heartbeat_interval param
 			Fees:           "50000uqor",
@@ -166,6 +176,7 @@ func Load(path string) (Config, error) {
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
 		return cfg, fmt.Errorf("parsing config: %w", err)
 	}
+	applyEnv(&cfg)
 	if cfg.OperatorAddress != "" {
 		if err := ValidateOperatorAddress(cfg.OperatorAddress); err != nil {
 			return cfg, fmt.Errorf("config operator_address: %w", err)
@@ -185,4 +196,18 @@ func Save(path string, cfg Config) error {
 	}
 	defer f.Close()
 	return toml.NewEncoder(f).Encode(cfg)
+}
+
+// RPCAddrEnv overrides rpc_addr (and, when it matched, primary_addr) from the
+// environment. It is what docker-compose.yml sets; it had been documented as
+// honoured for several releases while nothing read it.
+const RPCAddrEnv = "QORECHAIN_RPC_ADDR"
+
+func applyEnv(cfg *Config) {
+	if v := os.Getenv(RPCAddrEnv); v != "" {
+		if cfg.PrimaryAddr == "" || cfg.PrimaryAddr == cfg.RPCAddr {
+			cfg.PrimaryAddr = v
+		}
+		cfg.RPCAddr = v
+	}
 }

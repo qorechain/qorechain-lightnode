@@ -1,15 +1,46 @@
-# QoreChain Light Node example configuration
+# QoreChain light node configuration (~/.qorechain-lightnode/config.toml).
+# `lightnode-sx onboard` writes this file; the values below are the defaults
+# with the ones an operator normally changes filled in.
 
-[network]
-# Replace this placeholder with the current official QoreChain RPC endpoint.
-rpc_endpoint = ""
+node_type = "sx"
+chain_id  = "qorechain-vladi"          # mainnet; testnet is qorechain-diana
+rpc_addr  = "https://rpc.qore.host"    # or your own node, http://localhost:26657
+# api_addr = "https://api.qore.host"   # REST endpoint; derived from rpc_addr when empty
+primary_addr  = "https://rpc.qore.host"
+witness_addrs = []
 
-# Set this according to the active network configuration.
-chain_id = ""
+data_dir        = ""                   # empty = ~/.qorechain-lightnode
+keyring_backend = "file"               # file (passphrase from QORE_LIGHTNODE_KEYRING_PASSPHRASE), os, or test
+key_name        = "operator"           # the node's post-quantum key; also the qorechaind key name by default
 
-[node]
-# Use "sx" for server deployments or "ux" for dashboard mode.
-edition = "sx"
+# The account this node belongs to. A post-quantum node key has no address of
+# its own; it is attached to this account. Print it with: qorechaind keys show operator -a
+operator_address = ""
 
-[logging]
-level = "info"
+[heartbeat]
+enabled         = true
+check_interval  = "60s"
+interval_blocks = 1000                 # the chain's heartbeat_interval
+qorechaind_path = ""                   # empty = "qorechaind" on PATH (the Docker image ships it)
+qorechaind_home = ""                   # empty = ~/.qorechaind (operator key + pqc/<key_name>.dilithium)
+fees            = "50000uqor"
+gas             = "300000"
+
+[delegation]
+auto_claim        = false              # claim accrued light node rewards to the operator wallet
+compound_interval = "1h"
+min_reward_claim  = "1000000"          # 1 QOR
+validators        = []
+split_weights     = []
+rebalance_enabled = true
+min_reputation    = 0.5
+
+[telemetry]
+enabled = true
+
+[dashboard]
+enabled   = false
+bind_addr = "127.0.0.1:8420"
+
+log_level  = "info"
+log_format = "text"

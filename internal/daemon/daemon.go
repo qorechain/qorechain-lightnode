@@ -2,11 +2,9 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -35,11 +33,12 @@ type Daemon struct {
 	store       *db.DB
 	chain       *client.Client
 	keys        keyring.Backend
-	txBuilder   *client.TxBuilder
+	signer      *cliSigner // nil when qorechaind is not available; signerNote says why
+	signerNote  string
 	lc          *lightclient.LightClient
 	telem       *telemetry.Manager
 	delegations *delegation.Manager
-	autoComp    *delegation.AutoCompounder
+	autoClaim   *delegation.AutoClaimer
 	rebalancer  *delegation.Rebalancer
 }
 
@@ -53,8 +52,10 @@ func New(cfg config.Config) (*Daemon, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
-	// Derive LCD URL from RPC address (replace RPC port with REST port)
-	lcdURL := deriveLCDURL(cfg.RPCAddr)
+	lcdURL := cfg.APIAddr
+	if lcdURL == "" {
+		lcdURL = deriveLCDURL(cfg.RPCAddr)
+	}
 
 	// Chain client
 	chain := client.New(cfg.RPCAddr, lcdURL)
@@ -66,8 +67,9 @@ func New(cfg config.Config) (*Daemon, error) {
 		return nil, fmt.Errorf("initializing keyring: %w", err)
 	}
 
-	// Transaction builder for submitting TXs
-	txBuilder := client.NewTxBuilder(chain, keys, cfg.KeyName, cfg.ChainID)
+	// The signer for on-chain messages: the qorechaind CLI pipeline that holds
+	// the operator key and produces the hybrid post-quantum signature.
+	signer, signerNote := newCLISigner(cfg)
 
 	// Light client
 	lc, err := lightclient.New(chain, store, logger, cfg.WitnessAddrs)
@@ -103,33 +105,36 @@ func New(cfg config.Config) (*Daemon, error) {
 		_ = delMgr.SetSplit(cfg.Delegation.Validators, weights)
 	}
 
-	// Auto-compounder
-	compoundInterval, err := time.ParseDuration(cfg.Delegation.CompoundInterval)
-	if err != nil {
-		compoundInterval = 1 * time.Hour
+	// Auto-claim of light node rewards (opt-in; claims only, never re-delegates)
+	claimInterval, err := time.ParseDuration(cfg.Delegation.CompoundInterval)
+	if err != nil || claimInterval <= 0 {
+		claimInterval = 1 * time.Hour
 	}
 	minReward, _ := strconv.ParseInt(cfg.Delegation.MinRewardClaim, 10, 64)
 	if minReward <= 0 {
 		minReward = 1000000 // 1 QOR
 	}
-	autoComp := delegation.NewAutoCompounder(delMgr, txBuilder, compoundInterval, minReward, logger)
 
 	// Rebalancer
 	rebalancer := delegation.NewRebalancer(chain, delMgr, cfg.Delegation.MinReputation, logger)
 
-	return &Daemon{
+	d := &Daemon{
 		cfg:         cfg,
 		logger:      logger,
 		store:       store,
 		chain:       chain,
 		keys:        keys,
-		txBuilder:   txBuilder,
+		signer:      signer,
+		signerNote:  signerNote,
 		lc:          lc,
 		telem:       telem,
 		delegations: delMgr,
-		autoComp:    autoComp,
 		rebalancer:  rebalancer,
-	}, nil
+	}
+	if cfg.OperatorAddress != "" {
+		d.autoClaim = delegation.NewAutoClaimer(chain, d, cfg.OperatorAddress, claimInterval, minReward, logger)
+	}
+	return d, nil
 }
 
 // Run starts all subsystems and blocks until the context is cancelled or a
@@ -169,16 +174,23 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.telem.Start(ctx)
 	}
 
-	// 3. Start auto-compounder
-	if d.cfg.Delegation.AutoCompound {
-		go func() {
-			if err := d.autoComp.Run(ctx); err != nil && ctx.Err() == nil {
-				d.logger.Error("auto-compounder failed", "error", err)
-			}
-		}()
+	// 3. Auto-claim of light node rewards, when asked for and possible
+	if d.cfg.Delegation.AutoClaim || d.cfg.Delegation.AutoCompound {
+		switch {
+		case d.signer == nil:
+			d.logger.Warn("auto-claim disabled: no signer", "reason", d.signerNote)
+		case d.autoClaim == nil:
+			d.logger.Warn("auto-claim disabled: operator_address is not set in config.toml")
+		default:
+			go func() {
+				if err := d.autoClaim.Run(ctx); err != nil && ctx.Err() == nil {
+					d.logger.Error("auto-claim failed", "error", err)
+				}
+			}()
+		}
 	}
 
-	// 4. Periodic heartbeat submission (log-only placeholder)
+	// 4. Periodic heartbeat submission
 	go d.heartbeatLoop(ctx)
 
 	// 5. Periodic delegation sync
@@ -236,18 +248,68 @@ func (d *Daemon) Logger() *slog.Logger {
 	return d.logger
 }
 
-// heartbeatLoop submits periodic heartbeat transactions to prove node liveness.
-func (d *Daemon) heartbeatLoop(ctx context.Context) {
-	hb := d.cfg.Heartbeat
-	if !hb.Enabled || hb.QorechaindPath == "" {
-		d.logger.Info("on-chain heartbeats disabled; set [heartbeat] enabled + qorechaind_path to enable",
-			"note", "the chain is PQC-required, so heartbeats are submitted via the qorechaind CLI signer")
-		return
+// SubmitLightNodeTx implements delegation.TxSubmitter on top of the signer.
+func (d *Daemon) SubmitLightNodeTx(ctx context.Context, txArgs ...string) (string, error) {
+	if d.signer == nil {
+		return "", fmt.Errorf("no signer: %s", d.signerNote)
 	}
-
-	keyName := hb.KeyName
+	keyName := d.cfg.Heartbeat.KeyName
 	if keyName == "" {
 		keyName = d.cfg.KeyName
+	}
+	res, err := d.signer.Submit(ctx, keyName, d.cfg.KeyName, txArgs...)
+	if err != nil {
+		return "", err
+	}
+	return res.TxHash, nil
+}
+
+// Signer reports whether on-chain submission is possible, and why not.
+func (d *Daemon) Signer() (ok bool, reason string) {
+	return d.signer != nil, d.signerNote
+}
+
+// LicenceGate is what the node tells an operator whose account cannot register
+// yet. The chain refuses a registration without an active lightnode_operator
+// licence, so the node says so before anyone builds a transaction that would
+// be refused, and says where the licence comes from.
+func LicenceGate(operator string, lic client.LicenseStatus) (blocked bool, message string) {
+	switch {
+	case !lic.Found:
+		return true, fmt.Sprintf("operator address %s has no lightnode_operator licence. "+
+			"Buy one at https://dashboard.qorechain.io -> Tools -> Buy License, and enter this operator address there; "+
+			"the on-chain grant follows and register works once it lands.", operator)
+	case !lic.Active:
+		return true, fmt.Sprintf("operator address %s holds a lightnode_operator licence that is suspended; "+
+			"contact support through the dashboard before registering.", operator)
+	}
+	return false, ""
+}
+
+// heartbeatLoop keeps a registered node alive on chain.
+//
+// The chain marks a node inactive after heartbeat_interval + grace blocks
+// without a heartbeat and refuses one sent sooner than heartbeat_interval
+// blocks after the previous. Pacing therefore follows the chain's own record
+// of the last heartbeat rather than a counter in this process, so a restart
+// neither doubles up nor waits a whole interval.
+//
+// An unregistered node does not heartbeat; it reports, at each check, why it
+// cannot: no licence (with where to get one), or licensed but not registered.
+func (d *Daemon) heartbeatLoop(ctx context.Context) {
+	hb := d.cfg.Heartbeat
+	if !hb.Enabled {
+		d.logger.Info("on-chain heartbeats disabled in config ([heartbeat] enabled = false)")
+		return
+	}
+	if d.signer == nil {
+		d.logger.Warn("on-chain heartbeats disabled: no signer", "reason", d.signerNote,
+			"note", "a registered node is marked inactive without heartbeats")
+		return
+	}
+	if d.cfg.OperatorAddress == "" {
+		d.logger.Warn("on-chain heartbeats disabled: operator_address is not set in config.toml")
+		return
 	}
 
 	check, err := time.ParseDuration(hb.CheckInterval)
@@ -262,102 +324,69 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(check)
 	defer ticker.Stop()
 
-	// The chain rate-limits heartbeats (ErrHeartbeatTooEarly) to at most one per
-	// `heartbeat_interval` blocks, and marks a node inactive after interval+grace
-	// blocks with no heartbeat. Pace by height: submit when at least
-	// `intervalBlocks` blocks have elapsed since our last submission. lastSubmit=0
-	// makes the first eligible tick fire promptly so a fresh node goes active.
-	var lastSubmit int64
-	due := func() bool {
-		h := d.lc.LatestHeight()
-		if h == 0 {
-			return false
+	var lastState string // last reason logged, so a steady state is not repeated every tick
+	report := func(state, msg string, args ...any) {
+		if state == lastState {
+			return
 		}
-		if lastSubmit == 0 || h-lastSubmit >= intervalBlocks {
-			lastSubmit = h
-			return true
-		}
-		return false
+		lastState = state
+		d.logger.Warn(msg, args...)
 	}
 
-	if due() {
-		d.submitHeartbeatCLI(ctx, keyName)
+	tick := func() {
+		h := d.lc.LatestHeight()
+		if h == 0 {
+			return
+		}
+		registered, node, err := d.chain.LightNodeRegistration(ctx, d.cfg.OperatorAddress)
+		if err != nil {
+			report("query-error", "heartbeat: cannot read the node record", "error", err)
+			return
+		}
+		if !registered {
+			lic, err := d.chain.LicenseCheck(ctx, d.cfg.OperatorAddress, client.FeatureLightNodeOperator)
+			if err != nil {
+				report("licence-error", "heartbeat: cannot check the licence", "error", err)
+				return
+			}
+			if blocked, msg := LicenceGate(d.cfg.OperatorAddress, lic); blocked {
+				report("no-licence", "node not registered: "+msg)
+				return
+			}
+			report("unregistered", "node not registered: licence is active, run `lightnode-sx register` and submit the printed commands",
+				"operator", d.cfg.OperatorAddress)
+			return
+		}
+		lastState = ""
+
+		last, _ := strconv.ParseInt(node.LightNode.LastHeartbeat, 10, 64)
+		if h-last < intervalBlocks {
+			return
+		}
+		res, err := d.signer.Submit(ctx, d.heartbeatKey(), d.cfg.KeyName, "lightnode", "heartbeat")
+		if err != nil {
+			d.logger.Warn("heartbeat failed", "error", err)
+			return
+		}
+		d.logger.Info("heartbeat submitted", "tx_hash", res.TxHash, "height", h)
 	}
+
+	tick()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if due() {
-				d.submitHeartbeatCLI(ctx, keyName)
-			}
+			tick()
 		}
 	}
 }
 
-// submitHeartbeatCLI builds, PQC-cosigns and broadcasts a lightnode heartbeat by
-// driving the qorechaind CLI pipeline (tx lightnode heartbeat --generate-only ->
-// tx pqc cosign). The chain is PQC-required, so a hybrid Dilithium-5 signature is
-// mandatory; reusing the node binary's proven signer avoids re-implementing the
-// protobuf-tx + hybrid-signing stack inside this minimal-dependency client.
-func (d *Daemon) submitHeartbeatCLI(ctx context.Context, keyName string) {
-	hb := d.cfg.Heartbeat
-	common := []string{
-		"--chain-id", d.cfg.ChainID,
-		"--node", toTCP(d.cfg.RPCAddr),
-		"--keyring-backend", d.cfg.KeyringBackend,
-		"--home", hb.QorechaindHome,
+func (d *Daemon) heartbeatKey() string {
+	if d.cfg.Heartbeat.KeyName != "" {
+		return d.cfg.Heartbeat.KeyName
 	}
-
-	// 1. generate-only unsigned heartbeat
-	genArgs := append([]string{"tx", "lightnode", "heartbeat", "--from", keyName,
-		"--generate-only", "--gas", hb.Gas, "--fees", hb.Fees}, common...)
-	genCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	unsigned, err := exec.CommandContext(genCtx, hb.QorechaindPath, genArgs...).Output()
-	if err != nil {
-		d.logger.Warn("heartbeat: generate failed", "error", err)
-		return
-	}
-
-	tmp, err := os.CreateTemp("", "ln-heartbeat-*.json")
-	if err != nil {
-		d.logger.Warn("heartbeat: temp file failed", "error", err)
-		return
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(unsigned); err != nil {
-		tmp.Close()
-		d.logger.Warn("heartbeat: write unsigned failed", "error", err)
-		return
-	}
-	tmp.Close()
-
-	// 2. PQC-cosign (Dilithium-5 hybrid) + broadcast
-	cosignArgs := append([]string{"tx", "pqc", "cosign", tmp.Name(), "--from", keyName,
-		"--pqc-key", keyName, "-y", "-b", "sync", "-o", "json"}, common...)
-	csCtx, cancel2 := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel2()
-	out, err := exec.CommandContext(csCtx, hb.QorechaindPath, cosignArgs...).Output()
-	if err != nil {
-		d.logger.Warn("heartbeat: cosign/broadcast failed", "error", err)
-		return
-	}
-
-	var res struct {
-		TxHash string `json:"txhash"`
-		Code   int    `json:"code"`
-		RawLog string `json:"raw_log"`
-	}
-	if err := json.Unmarshal(out, &res); err != nil {
-		d.logger.Warn("heartbeat: parse result failed", "error", err, "out", strings.TrimSpace(string(out)))
-		return
-	}
-	if res.Code != 0 {
-		d.logger.Warn("heartbeat rejected", "code", res.Code, "log", res.RawLog)
-		return
-	}
-	d.logger.Info("heartbeat submitted", "tx_hash", res.TxHash, "height", d.lc.LatestHeight())
+	return d.cfg.KeyName
 }
 
 // toTCP normalizes an http(s):// RPC address to the tcp:// scheme the cosmos
@@ -403,11 +432,7 @@ func (d *Daemon) delegationSyncLoop(ctx context.Context) {
 	}
 }
 
-// deriveLCDURL converts an RPC URL to a REST/LCD URL by replacing the
-// RPC port (26657) with the LCD port (1317).
-func deriveLCDURL(rpcAddr string) string {
-	return strings.Replace(rpcAddr, "26657", "1317", 1)
-}
+func deriveLCDURL(rpcAddr string) string { return client.DeriveLCDURL(rpcAddr) }
 
 // parseIntervals converts config string durations to telemetry intervals.
 func parseIntervals(cfg config.TelemetryConfig) (telemetry.Intervals, error) {

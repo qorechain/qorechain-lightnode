@@ -79,7 +79,15 @@ func (b *OSKeychainBackend) Export(name string) ([]byte, error) {
 }
 
 func (b *OSKeychainBackend) Sign(name string, message []byte) ([]byte, error) {
-	return nil, fmt.Errorf("signing not yet implemented")
+	entries, err := b.loadEntries()
+	if err != nil {
+		return nil, err
+	}
+	entry, exists := entries[name]
+	if !exists {
+		return nil, fmt.Errorf("key %q not found", name)
+	}
+	return signEntry(entry, message)
 }
 
 func (b *OSKeychainBackend) List() ([]KeyInfo, error) {

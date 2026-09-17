@@ -14,6 +14,31 @@ COPY . .
 # native library to link or copy into the runtime image.
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /build/lightnode-sx ./cmd/lightnode-sx/
 
+# Signer stage: the released chain binary, which the daemon drives to produce
+# the hybrid post-quantum signature on heartbeats and reward claims. It is
+# downloaded from the release channel and checked against the pinned digest,
+# not built here: the chain build needs CGO and native libraries, and this
+# image stays pure Go. The tarball ships the shared libraries it needs.
+#
+# The release channel publishes linux/amd64 only. On another target the image
+# still builds and runs; it just has no signer, and `lightnode-sx status`
+# says so. Bump both ARGs together when the chain release moves.
+FROM debian:bookworm-slim AS signer
+ARG TARGETARCH
+ARG QORECHAIND_VERSION=3.1.95
+ARG QORECHAIND_SHA256=522552f7db91cbd0c21120e309241c8927e48566d37d4f76b540f5e4516e6b61
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eu; mkdir -p /opt/qorechaind/lib; \
+    if [ "${TARGETARCH:-amd64}" = "amd64" ]; then \
+      curl -fsSL -o /tmp/qorechaind.tgz \
+        "https://download.qore.host/mainnet/qorechaind-v${QORECHAIND_VERSION}-linux-amd64.tar.gz"; \
+      echo "${QORECHAIND_SHA256}  /tmp/qorechaind.tgz" | sha256sum -c -; \
+      tar -xzf /tmp/qorechaind.tgz -C /opt/qorechaind; rm /tmp/qorechaind.tgz; \
+    else \
+      echo "no qorechaind release for ${TARGETARCH}; the image has no signer" > /opt/qorechaind/NO_SIGNER; \
+    fi
+
 # Runtime stage
 FROM debian:bookworm-slim
 
@@ -22,9 +47,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/lightnode-sx /usr/local/bin/lightnode-sx
-RUN ldconfig
+COPY --from=signer /opt/qorechaind /opt/qorechaind
+RUN set -eu; \
+    if [ -x /opt/qorechaind/qorechaind ]; then \
+      mv /opt/qorechaind/qorechaind /usr/local/bin/qorechaind; \
+      mv /opt/qorechaind/lib/*.so /usr/lib/; \
+    fi; \
+    rm -rf /opt/qorechaind; ldconfig
 
-RUN mkdir -p /root/.qorechain-lightnode
+# Node data (keys, database, config) and the qorechaind home that holds the
+# operator key; both are volumes, see docker-compose.yml.
+RUN mkdir -p /root/.qorechain-lightnode /root/.qorechaind
 
 ENTRYPOINT ["lightnode-sx"]
 CMD ["start"]
