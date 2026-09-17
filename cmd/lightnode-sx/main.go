@@ -16,7 +16,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/keyring"
 )
 
-const version = "3.1.1"
+const version = "3.1.2"
 
 var (
 	cfgFile string
@@ -61,7 +61,15 @@ func defaultHomeDir() string {
 func loadConfig() (config.Config, error) {
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
-		// If config file not found, use defaults with home dir override
+		// A missing file means "not onboarded yet": run on defaults so the
+		// onboarding pointer and the key commands still work. Any other
+		// failure (unparseable TOML, an invalid operator_address) is an error
+		// the operator must see; it used to be swallowed here, and the daemon
+		// then ran silently on defaults, on the wrong chain, with the wrong
+		// keyring backend.
+		if !errors.Is(err, os.ErrNotExist) {
+			return cfg, err
+		}
 		cfg = config.DefaultConfig()
 	}
 	if homeDir != "" {
@@ -93,7 +101,10 @@ func startCmd() *cobra.Command {
 				}
 			}
 
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			d, err := daemon.New(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing daemon: %w", err)
@@ -118,7 +129,10 @@ func statusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show node and light client sync status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			d, err := daemon.New(cfg)
 			if err != nil {
 				return err
@@ -151,7 +165,7 @@ func keysCmd() *cobra.Command {
 		Use:   "keys",
 		Short: "Manage keyring",
 	}
-	cmd.AddCommand(keysCreateCmd(), keysListCmd(), keysImportCmd(), keysExportCmd())
+	cmd.AddCommand(keysCreateCmd(), keysListCmd(), keysShowCmd(), keysImportCmd(), keysExportCmd())
 	return cmd
 }
 
@@ -162,7 +176,10 @@ func keysCreateCmd() *cobra.Command {
 		Short: "Create a new key",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
 			if err != nil {
 				return err
@@ -171,9 +188,11 @@ func keysCreateCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("creating key: %w", err)
 			}
-			fmt.Printf("Name:    %s\n", info.Name)
-			fmt.Printf("Type:    %s\n", info.Type)
-			fmt.Printf("Address: %s\n", info.Address)
+			fmt.Printf("Name:       %s\n", info.Name)
+			fmt.Printf("Type:       %s\n", info.Type)
+			fmt.Printf("Public key: %s\n", hex.EncodeToString(info.PubKey))
+			fmt.Println()
+			fmt.Println(noAddressNote)
 			return nil
 		},
 	}
@@ -186,7 +205,10 @@ func keysListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all keys",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
 			if err != nil {
 				return err
@@ -200,11 +222,65 @@ func keysListCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintf(w, "NAME\tTYPE\tADDRESS\n")
+			fmt.Fprintf(w, "NAME\tTYPE\tADDRESS\tPUBLIC KEY\n")
 			for _, k := range list {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", k.Name, k.Type, k.Address)
+				addr := k.Address
+				if addr == "" {
+					addr = "-"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", k.Name, k.Type, addr, abbreviateHex(k.PubKey))
 			}
 			w.Flush()
+			fmt.Println()
+			fmt.Println(noAddressNote)
+			return nil
+		},
+	}
+}
+
+// noAddressNote explains the one thing every new operator trips over: the
+// node's post-quantum key is not an account, so it has no address.
+const noAddressNote = `A Dilithium-5 key has no chain address of its own. On QoreChain a post-quantum
+key is attached to an account, it does not make one. Your operator address is the
+funded qor1... account you register the node from: create it with qorechaind
+("qorechaind keys add operator"), fund it, attach this key to it (see "register"),
+and set operator_address in config.toml.`
+
+func abbreviateHex(b []byte) string {
+	if len(b) == 0 {
+		return "-"
+	}
+	h := hex.EncodeToString(b)
+	if len(h) <= 24 {
+		return h
+	}
+	return h[:12] + "..." + h[len(h)-8:]
+}
+
+func keysShowCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show <name>",
+		Short: "Show a key's type and full public key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
+			if err != nil {
+				return err
+			}
+			info, err := keys.Get(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Name:       %s\n", info.Name)
+			fmt.Printf("Type:       %s\n", info.Type)
+			if info.Address != "" {
+				fmt.Printf("Address:    %s\n", info.Address)
+			}
+			fmt.Printf("Public key: %s\n", hex.EncodeToString(info.PubKey))
 			return nil
 		},
 	}
@@ -217,7 +293,10 @@ func keysImportCmd() *cobra.Command {
 		Short: "Import a private key",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
 			if err != nil {
 				return err
@@ -244,7 +323,10 @@ func keysExportCmd() *cobra.Command {
 		Short: "Export a private key in hex",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
 			if err != nil {
 				return err
@@ -259,29 +341,54 @@ func keysExportCmd() *cobra.Command {
 	}
 }
 
-// registerCmd prints registration information.
+// registerCmd prints the exact chain commands that register this node.
+//
+// The chain requires a post-quantum hybrid signature on every transaction, so
+// registration is a generate-then-cosign pair run with qorechaind against the
+// operator's funded account. The node's Dilithium-5 key is that account's
+// post-quantum key; if it is not attached yet, the first command attaches it.
 func registerCmd() *cobra.Command {
 	var nodeType, ver string
 	cmd := &cobra.Command{
 		Use:   "register",
-		Short: "Print light node registration info for chain submission",
+		Short: "Print the chain commands that register this node",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
 			if err != nil {
 				return err
 			}
 			info, err := keys.Get(cfg.KeyName)
 			if err != nil {
-				return fmt.Errorf("operator key %q not found: %w", cfg.KeyName, err)
+				return fmt.Errorf("node key %q not found: %w", cfg.KeyName, err)
 			}
-			fmt.Println("Registration command:")
-			fmt.Printf("  qorechaind tx lightnode register-node %s %s --from %s --chain-id %s\n",
-				nodeType, ver, info.Address, cfg.ChainID)
-			fmt.Println()
-			fmt.Printf("Operator Address: %s\n", info.Address)
-			fmt.Printf("Node Type:        %s\n", nodeType)
+			if cfg.OperatorAddress == "" {
+				return fmt.Errorf("operator_address is not set in config.toml.\n\n%s\n\nThe address is printed by: qorechaind keys show operator -a", noAddressNote)
+			}
+			if err := config.ValidateOperatorAddress(cfg.OperatorAddress); err != nil {
+				return err
+			}
+			pub := hex.EncodeToString(info.PubKey)
+			fmt.Printf("Operator address: %s\n", cfg.OperatorAddress)
+			fmt.Printf("Node key:         %s (%s)\n", info.Name, info.Type)
+			fmt.Printf("Node type:        %s\n", nodeType)
 			fmt.Printf("Version:          %s\n", ver)
+			fmt.Println()
+			fmt.Println("1. Once only: attach this node key to the operator account as its post-quantum key.")
+			fmt.Println("   Skip if the account already has one (check: curl -s https://api.qore.host/qorechain/pqc/v1/account/" + cfg.OperatorAddress + ").")
+			fmt.Println("   Export the key into qorechaind's key directory and register it:")
+			fmt.Printf("     lightnode-sx keys export %s > ~/.qorechaind/pqc/%s.dilithium && chmod 600 ~/.qorechaind/pqc/%s.dilithium\n", info.Name, info.Name, info.Name)
+			fmt.Printf("     qorechaind tx pqc register-key-v2 dilithium5 %s hybrid --from operator --chain-id %s --gas 400000 --fees 40000uqor -y\n", pub, cfg.ChainID)
+			fmt.Println()
+			fmt.Println("2. Register the node (generate, then cosign with the post-quantum key):")
+			fmt.Printf("     qorechaind tx lightnode register %s %s --from operator --chain-id %s --gas 300000 --fees 30000uqor --generate-only > register.json\n", nodeType, ver, cfg.ChainID)
+			fmt.Printf("     qorechaind tx pqc cosign register.json --from operator --pqc-key %s --chain-id %s\n", info.Name, cfg.ChainID)
+			fmt.Println()
+			fmt.Println("\"operator\" is the qorechaind key name holding " + cfg.OperatorAddress + "; adjust if yours differs.")
+			fmt.Println("Registration needs an active lightnode_operator licence on the operator address; the chain refuses it otherwise.")
 			return nil
 		},
 	}
@@ -296,7 +403,10 @@ func validatorsCmd() *cobra.Command {
 		Use:   "validators",
 		Short: "List bonded validators",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			d, err := daemon.New(cfg)
 			if err != nil {
 				return err
@@ -329,7 +439,10 @@ func delegationCmd() *cobra.Command {
 		Use:   "delegation",
 		Short: "Show current delegations",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			d, err := daemon.New(cfg)
 			if err != nil {
 				return err
@@ -362,7 +475,10 @@ func rewardsCmd() *cobra.Command {
 		Use:   "rewards",
 		Short: "Show pending staking rewards",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			d, err := daemon.New(cfg)
 			if err != nil {
 				return err
@@ -385,7 +501,10 @@ func networkCmd() *cobra.Command {
 		Use:   "network",
 		Short: "Show network telemetry from local database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _ := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			d, err := daemon.New(cfg)
 			if err != nil {
 				return err

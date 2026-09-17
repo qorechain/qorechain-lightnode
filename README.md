@@ -1,5 +1,7 @@
 # QoreChain Light Node
 
+**v3.1.2** — the operator wallet, explained by the tool instead of by support: `keys list` and `keys create` say plainly that a Dilithium-5 node key has no address of its own (a post-quantum key is attached to an account, it does not make one), `keys show` prints the public key, `config.toml` gains `operator_address` (validated), and `register` prints the real two-step flow (attach the key to the operator account, then generate + cosign the registration) with the correct `qorechaind tx lightnode register` command. No daemon behaviour change.
+
 **v3.1.1** — aligned with `qorechain-core@v3.0.2`. Adds a PQC regression test suite (keygen, sign, verify, and tamper-detection) that guards the v3.0.2 signature-verification fix, and runs it in CI. No runtime behaviour change from v3.1.0.
 
 Light node client for the QoreChain network. Provides two editions:

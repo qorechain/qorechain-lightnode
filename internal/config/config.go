@@ -34,6 +34,13 @@ type Config struct {
 	KeyringBackend string `toml:"keyring_backend"` // "file" or "os"
 	KeyName        string `toml:"key_name"`
 
+	// OperatorAddress is the funded chain account (qor1...) this node is
+	// registered from and receives rewards on. The node's own Dilithium-5 key
+	// has no address of its own: on this chain a post-quantum key is attached
+	// to an account, it does not make one. Create the account with qorechaind,
+	// fund it, register the node's key on it, and put the address here.
+	OperatorAddress string `toml:"operator_address"`
+
 	// Staking & Delegation
 	Delegation DelegationConfig `toml:"delegation"`
 
@@ -99,7 +106,7 @@ type DashboardConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		NodeType:       "sx",
-		Version:        "3.1.1",
+		Version:        "3.1.2",
 		ChainID:        "qorechain-diana",
 		RPCAddr:        "http://localhost:26657",
 		GRPCAddr:       "localhost:9090",
@@ -158,6 +165,11 @@ func Load(path string) (Config, error) {
 	}
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
 		return cfg, fmt.Errorf("parsing config: %w", err)
+	}
+	if cfg.OperatorAddress != "" {
+		if err := ValidateOperatorAddress(cfg.OperatorAddress); err != nil {
+			return cfg, fmt.Errorf("config operator_address: %w", err)
+		}
 	}
 	return cfg, nil
 }

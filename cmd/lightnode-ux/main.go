@@ -14,7 +14,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/dashboard"
 )
 
-const version = "3.1.1"
+const version = "3.1.2"
 
 var (
 	cfgFile string
