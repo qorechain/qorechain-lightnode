@@ -22,7 +22,7 @@ type TxSubmitter interface {
 // the hot key to be allowed to move stake, and a key that can move stake turns
 // a compromised server into a loss of funds. Delegation changes go through the
 // operator's wallet. The earlier version of this loop was called a compounder
-// and signed nothing the chain could verify; see the 3.1.2 changelog.
+// and signed nothing the chain could verify; see the 3.1.3 changelog.
 type AutoClaimer struct {
 	chain     *client.Client
 	submit    TxSubmitter
