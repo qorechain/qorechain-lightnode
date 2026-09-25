@@ -25,8 +25,8 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /build/lightnode-sx ./c
 # says so. Bump both ARGs together when the chain release moves.
 FROM debian:bookworm-slim AS signer
 ARG TARGETARCH
-ARG QORECHAIND_VERSION=3.1.95
-ARG QORECHAIND_SHA256=522552f7db91cbd0c21120e309241c8927e48566d37d4f76b540f5e4516e6b61
+ARG QORECHAIND_VERSION=3.2.0
+ARG QORECHAIND_SHA256=06e6fb6ccfd66a653832185c2174bef040bd686dd759c6b1386c1326c7ad52f0
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eu; mkdir -p /opt/qorechaind/lib; \
