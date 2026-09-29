@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/qorechain/qorechain-lightnode/internal/client"
+	"github.com/qorechain/qorechain-lightnode/internal/netutil"
 )
 
 // Assurance describes how much a stored header is actually worth.
@@ -89,25 +90,33 @@ func requireSafeScheme(addr string) error {
 	if u.Scheme != "http" {
 		return fmt.Errorf("witness %q uses scheme %q; use https", addr, u.Scheme)
 	}
-	if isLocalHost(u.Hostname()) {
+	if netutil.IsLoopbackHost(u.Hostname()) {
 		return nil
 	}
 	return fmt.Errorf("witness %q uses plaintext http to a remote host; use https", addr)
 }
 
-func isLocalHost(h string) bool {
-	switch h {
-	case "localhost", "127.0.0.1", "::1", "[::1]":
-		return true
-	}
-	return strings.HasPrefix(h, "127.")
-}
-
+// canonicalHost is the identity two endpoints must not share. Every spelling of
+// loopback (localhost, 127.0.0.1, 127.1.2.3, ::1) is this same machine, so they
+// collapse to one key per port: two of them are one witness, not two.
 func canonicalHost(addr string) string {
-	if u, err := url.Parse(addr); err == nil && u.Host != "" {
-		return strings.ToLower(u.Host)
+	u, err := url.Parse(addr)
+	if err != nil || u.Host == "" {
+		return strings.ToLower(addr)
 	}
-	return strings.ToLower(addr)
+	if netutil.IsLoopbackHost(u.Hostname()) {
+		port := u.Port()
+		if port == "" {
+			switch strings.ToLower(u.Scheme) {
+			case "https":
+				port = "443"
+			case "http":
+				port = "80"
+			}
+		}
+		return "loopback:" + port
+	}
+	return strings.ToLower(u.Host)
 }
 
 // checkedHeader is a header and the assurance actually behind it.
