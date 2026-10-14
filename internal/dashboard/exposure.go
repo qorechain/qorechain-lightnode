@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/qorechain/qorechain-lightnode/internal/netutil"
 )
 
 // isLoopback reports whether bindAddr keeps the listener on this machine.
@@ -20,11 +22,7 @@ func isLoopback(bindAddr string) bool {
 	if host == "" {
 		return false
 	}
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return netutil.IsLoopbackHost(host)
 }
 
 // DisplayURL renders the address the operator should actually open, instead of
