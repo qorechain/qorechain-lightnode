@@ -44,6 +44,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/validators", s.api.HandleValidators)
 	s.mux.HandleFunc("GET /api/delegation", s.api.HandleDelegation)
 	s.mux.HandleFunc("GET /api/rewards", s.api.HandleRewards)
+	s.mux.HandleFunc("GET /api/rewardpool", s.api.HandleRewardPool)
 	s.mux.HandleFunc("GET /api/network", s.api.HandleNetwork)
 	s.mux.HandleFunc("GET /api/bridge", s.api.HandleBridge)
 	s.mux.HandleFunc("GET /api/tokenomics", s.api.HandleTokenomics)

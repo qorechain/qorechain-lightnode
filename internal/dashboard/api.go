@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"math/big"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/qorechain/qorechain-lightnode/internal/client"
@@ -77,7 +80,68 @@ func (a *API) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		resp["latest_block_time"] = status.Result.SyncInfo.LatestBlockTime
 	}
 
+	// heartbeat_age_blocks is the single number that decides whether this node
+	// is about to stop earning: the chain marks a node inactive once it exceeds
+	// heartbeat_interval + heartbeat_grace_period without a beat, and an
+	// inactive node falls under min_uptime_for_rewards and earns nothing.
+	//
+	// QoreX's Light Node screen declares this field (NodeStatus.heartbeatAgeBlocks)
+	// and has never received it, so the companion app could not show an operator
+	// the one thing they need to watch.
+	a.addHeartbeatAge(ctx, resp)
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// addHeartbeatAge fills in heartbeat_age_blocks and the deadline it is measured
+// against. Every part is best-effort: a node whose operator address is not set,
+// or which is not registered, simply has no heartbeat age, and the rest of the
+// status response must still be served.
+func (a *API) addHeartbeatAge(ctx context.Context, resp map[string]interface{}) {
+	if a.cfg.OperatorAddress == "" {
+		return
+	}
+	registered, node, err := a.chain.LightNodeRegistration(ctx, a.cfg.OperatorAddress)
+	if err != nil || !registered {
+		return
+	}
+	resp["registered"] = true
+	resp["node_status"] = node.LightNode.Status
+
+	last, err := strconv.ParseInt(node.LightNode.LastHeartbeat, 10, 64)
+	if err != nil || last <= 0 {
+		return
+	}
+	height := a.lc.LatestHeight()
+	if height <= 0 {
+		if st, err := a.chain.NodeStatus(ctx); err == nil {
+			height, _ = strconv.ParseInt(st.Result.SyncInfo.LatestBlockHeight, 10, 64)
+		}
+	}
+	if height < last {
+		return
+	}
+	resp["heartbeat_age_blocks"] = height - last
+
+	// The deadline comes from the chain, not from a constant here, because both
+	// params are governable.
+	if p, err := a.chain.LightNodeParams(ctx); err == nil {
+		interval, e1 := strconv.ParseInt(p.HeartbeatInterval, 10, 64)
+		grace, e2 := strconv.ParseInt(p.HeartbeatGracePeriod, 10, 64)
+		if e1 == nil && e2 == nil && interval > 0 {
+			resp["heartbeat_interval_blocks"] = interval
+			resp["heartbeat_deadline_blocks"] = interval + grace
+			resp["heartbeat_overdue"] = height-last > interval+grace
+		}
+	}
+
+	// Uptime is total/expected, and it is what the reward gate compares against
+	// min_uptime_for_rewards.
+	total, e1 := strconv.ParseFloat(node.LightNode.TotalHeartbeats, 64)
+	expected, e2 := strconv.ParseFloat(node.LightNode.ExpectedHeartbeats, 64)
+	if e1 == nil && e2 == nil && expected > 0 {
+		resp["uptime"] = total / expected
+	}
 }
 
 // HandleValidators returns the active validator set.
@@ -123,29 +187,145 @@ func (a *API) HandleDelegation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleRewards returns total pending rewards.
+// HandleRewards reports what this node has earned, with the light-node fee
+// share and the staking yield kept apart.
+//
+// They were conflated until 2026-10-14, and it mattered: this handler returned
+// the delegator's STAKING rewards from /cosmos/distribution, while QoreX reads
+// the same field as "Accrued 3% fee-share rewards" and renders it as light-node
+// earnings (NodeRewards.totalUqor). An operator was shown their staking yield
+// labelled as light-node income - a number that moves for reasons that have
+// nothing to do with running a node, and which is non-zero even when the node
+// has earned nothing at all.
+//
+// total_rewards is therefore now the light-node accrual, matching the meaning
+// QoreX documents, and staking_rewards carries the distribution figure under
+// its own name.
 func (a *API) HandleRewards(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	total, err := a.deleg.GetTotalRewards(ctx)
-	if err != nil {
-		// Fall back to last known rewards from DB
-		a.logger.Debug("live rewards fetch failed, using cache", "error", err)
+	resp := map[string]interface{}{
+		"denom": "uqor",
+		// auto_compound is the historical name of the setting QoreX reads; the
+		// node claims rewards into the operator wallet and has never
+		// re-delegated them, so auto_claim is the truthful name and both are
+		// reported rather than leaving QoreX to default it to false.
+		"auto_claim":    a.cfg.Delegation.AutoClaim,
+		"auto_compound": a.cfg.Delegation.AutoClaim,
+	}
+	if ts := a.lastClaimedAt(); ts != "" {
+		resp["last_claimed_at"] = ts
+	}
+
+	// The light-node fee share, from the lightnode module.
+	feeShare, feeErr := a.lightNodeAccrued(ctx)
+	if feeErr == nil {
+		resp["total_rewards"] = feeShare
+		resp["cached"] = false
+	} else {
 		cached := a.cachedRewards()
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"total_rewards": cached,
-			"denom":         "uqor",
-			"cached":        true,
-		})
+		resp["total_rewards"] = cached
+		resp["cached"] = true
+		a.logger.Debug("light-node accrual unavailable, using cache", "error", feeErr)
+	}
+
+	// The staking yield on the operator's bonded stake, under its own name.
+	if staking, err := a.deleg.GetTotalRewards(ctx); err == nil {
+		resp["staking_rewards"] = staking
+	} else {
+		a.logger.Debug("staking rewards fetch failed", "error", err)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// lightNodeAccrued returns the uqor this node has accrued from the light-node
+// fee share and not yet claimed. An unregistered node has accrued nothing,
+// which is an answer rather than an error.
+func (a *API) lightNodeAccrued(ctx context.Context) (string, error) {
+	if a.cfg.OperatorAddress == "" {
+		return "0", nil
+	}
+	registered, node, err := a.chain.LightNodeRegistration(ctx, a.cfg.OperatorAddress)
+	if err != nil {
+		return "", err
+	}
+	if !registered || node.LightNode.AccumulatedRewards == "" {
+		return "0", nil
+	}
+	return node.LightNode.AccumulatedRewards, nil
+}
+
+// lastClaimedAt is the timestamp of the most recent recorded claim, or "".
+func (a *API) lastClaimedAt() string {
+	var ts sql.NullString
+	_ = a.store.Conn().QueryRow(
+		`SELECT claimed_at FROM rewards WHERE claimed_at IS NOT NULL ORDER BY id DESC LIMIT 1`,
+	).Scan(&ts)
+	if ts.Valid {
+		return ts.String
+	}
+	return ""
+}
+
+// HandleRewardPool reports how the chain's light-node reward pool divides up,
+// and what the per-node ceiling is actually worth per month at the live block
+// cadence.
+//
+// Without this an operator cannot tell earnable rewards from the module
+// account's balance. Most of that balance is Reserved - it accumulated while no
+// node was eligible, nobody earned it, and only governance can move it - so
+// reading the balance as "rewards waiting for me" overstates it by orders of
+// magnitude. On mainnet today the whole 3.16M QOR balance is reserved and
+// distributable is zero.
+//
+// The monthly figure is derived, not quoted: the chain's ceiling is per block,
+// so its value per month depends on a cadence that drifts.
+func (a *API) HandleRewardPool(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	pool, err := a.chain.RewardPool(ctx)
+	if err != nil {
+		if errors.Is(err, client.ErrEndpointUnavailable) {
+			writeError(w, http.StatusServiceUnavailable,
+				"this chain predates the light-node reward pool (upgrade v3.1.98)")
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "reward pool unavailable")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"total_rewards": total,
-		"denom":         "uqor",
-		"cached":        false,
-	})
+	resp := map[string]interface{}{
+		"balance":                       pool.Balance,
+		"reserved":                      pool.Reserved,
+		"payable":                       pool.Payable,
+		"outstanding":                   pool.Outstanding,
+		"distributable":                 pool.Distributable,
+		"initialized":                   pool.Initialized,
+		"max_reward_per_block_per_node": pool.MaxRewardPerBlockPerNode,
+		"denom":                         "uqor",
+	}
+
+	// Convert the per-block ceiling into the per-month figure an operator can
+	// actually reason about, using the measured cadence rather than an assumed
+	// one. Both the cadence and the window are reported so the number can be
+	// checked instead of trusted.
+	if perBlock, ok := new(big.Float).SetString(pool.MaxRewardPerBlockPerNode); ok {
+		const window = int64(20000)
+		if bt, err := a.chain.BlockTimeSeconds(ctx, window); err == nil && bt > 0 {
+			const secondsPerMonth = 2592000.0 // 30 days
+			perMonth := new(big.Float).Mul(perBlock, big.NewFloat(secondsPerMonth/bt))
+			resp["block_time_seconds"] = bt
+			resp["block_time_sample_blocks"] = window
+			resp["max_reward_per_month_per_node"] = perMonth.Text('f', 0)
+		} else if err != nil {
+			a.logger.Debug("cadence measurement failed; monthly ceiling omitted", "error", err)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // HandleNetwork returns recent headers and network telemetry.

@@ -82,7 +82,11 @@ func (c *Client) LightNodeRegistration(ctx context.Context, operator string) (re
 		if err := json.Unmarshal(body, &out); err != nil {
 			return false, nil, fmt.Errorf("decode light node: %w", err)
 		}
-		if out.LightNode.Address == "" {
+		// Both halves of the answer: the chain sets found=false for an
+		// operator with no node, and an empty address means the same thing.
+		// Reading only one of them is how the previous decoder reported every
+		// registered node as unregistered.
+		if !out.Found || out.LightNode.Address == "" {
 			return false, nil, nil
 		}
 		return true, &out, nil

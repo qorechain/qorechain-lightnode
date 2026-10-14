@@ -85,40 +85,83 @@ type RewardsResponse struct {
 	} `json:"total"`
 }
 
-// LightNodeQueryResponse from custom lightnode module query.
+// LightNodeView is one registered light node as the chain reports it. The
+// field names follow qorechain/lightnode/v1 LightNodeView exactly; they were
+// verified against live mainnet and diana on 2026-10-14, not assumed.
+type LightNodeView struct {
+	Address                  string   `json:"address"`
+	NodeType                 string   `json:"node_type"`
+	Version                  string   `json:"version"`
+	Capabilities             []string `json:"capabilities"`
+	Status                   string   `json:"status"`
+	RegisteredAt             string   `json:"registered_at"`
+	LastHeartbeat            string   `json:"last_heartbeat"`
+	TotalHeartbeats          string   `json:"total_heartbeats"`
+	ExpectedHeartbeats       string   `json:"expected_heartbeats"`
+	DelegatedStake           string   `json:"delegated_stake"`
+	AccumulatedRewards       string   `json:"accumulated_rewards"`
+	InitialHeartbeatInterval string   `json:"initial_heartbeat_interval"`
+}
+
+// LightNodeQueryResponse is the answer to /qorechain/lightnode/v1/node/{addr}.
+//
+// The wire shape is {"node": ..., "found": bool} - NOT {"light_node": ...}.
+// This struct said "light_node" until 2026-10-14, which no decoder ever
+// complained about: encoding/json ignores members it has no field for, so a
+// genuinely registered node unmarshalled into an all-zero record and
+// LightNodeRegistration reported it as unregistered. The daemon's registration
+// check and auto-claim both read that answer, so auto-claim could never see an
+// accrual to claim. The Go field keeps its name so call sites read the same;
+// only the tag was wrong.
 type LightNodeQueryResponse struct {
-	LightNode struct {
-		Address            string `json:"address"`
-		NodeType           string `json:"node_type"`
-		Version            string `json:"version"`
-		Status             string `json:"status"`
-		LastHeartbeat      string `json:"last_heartbeat"`
-		TotalHeartbeats    string `json:"total_heartbeats"`
-		DelegatedStake     string `json:"delegated_stake"`
-		AccumulatedRewards string `json:"accumulated_rewards"`
-	} `json:"light_node"`
+	LightNode LightNodeView `json:"node"`
+	Found     bool          `json:"found"`
 }
 
-// LightNodeParamsResponse from lightnode module.
+// LightNodeParamsResponse is the answer to /qorechain/lightnode/v1/params.
+//
+// Flat, with no "params" envelope: QueryParamsResponse in the proto declares
+// the seven fields at the top level. Verified live 2026-10-14.
 type LightNodeParamsResponse struct {
-	Params struct {
-		RegistrationFee     string `json:"registration_fee"`
-		HeartbeatInterval   string `json:"heartbeat_interval"`
-		MinDelegatedStake   string `json:"min_delegated_stake"`
-		RewardShare         string `json:"reward_share"`
-		MinUptimeForRewards string `json:"min_uptime_for_rewards"`
-		MaxLightNodes       string `json:"max_light_nodes"`
-	} `json:"params"`
+	RegistrationFee      string `json:"registration_fee"`
+	HeartbeatInterval    string `json:"heartbeat_interval"`
+	MinDelegatedStake    string `json:"min_delegated_stake"`
+	RewardShare          string `json:"reward_share"`
+	MinUptimeForRewards  string `json:"min_uptime_for_rewards"`
+	MaxLightNodes        string `json:"max_light_nodes"`
+	HeartbeatGracePeriod string `json:"heartbeat_grace_period"`
 }
 
-// LightNodeStatsResponse from lightnode module.
+// LightNodeStatsResponse is the answer to /qorechain/lightnode/v1/stats.
+// Flat, same reasoning as the params response.
 type LightNodeStatsResponse struct {
-	Stats struct {
-		TotalRegistered  string `json:"total_registered"`
-		TotalActive      string `json:"total_active"`
-		TotalRewards     string `json:"total_rewards"`
-		LastRewardHeight string `json:"last_reward_height"`
-	} `json:"stats"`
+	TotalRegistered  string `json:"total_registered"`
+	TotalActive      string `json:"total_active"`
+	TotalRewards     string `json:"total_rewards"`
+	LastRewardHeight string `json:"last_reward_height"`
+}
+
+// RewardPoolResponse is the answer to /qorechain/lightnode/v1/reward_pool,
+// added to the chain by the v3.1.98 reward-pool upgrade.
+//
+// It is the only place an operator can see what is actually earnable. The
+// module account balance is NOT the reward pool: Reserved is the part that
+// accumulated while nobody was eligible and that only governance can move, and
+// Outstanding is already credited to operators. Distributable is what the next
+// settlement may hand out, and it is swept to Reserved when unearned, so it
+// reads zero whenever no eligible node is running.
+//
+// MaxRewardPerBlockPerNode is the per-node ceiling, in uqor per block. It is a
+// per-BLOCK figure, so what it is worth per month depends on the live block
+// cadence - see RewardCeilingPerMonth.
+type RewardPoolResponse struct {
+	Balance                  string `json:"balance"`
+	Reserved                 string `json:"reserved"`
+	Payable                  string `json:"payable"`
+	Outstanding              string `json:"outstanding"`
+	Distributable            string `json:"distributable"`
+	MaxRewardPerBlockPerNode string `json:"max_reward_per_block_per_node"`
+	Initialized              bool   `json:"initialized"`
 }
 
 // ReputationResponse from reputation module.

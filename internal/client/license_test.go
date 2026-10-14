@@ -22,7 +22,10 @@ func TestLicenseCheckReadsTheChainsThreeAnswers(t *testing.T) {
 		case "/qorechain/license/v1/check/qor1suspended/lightnode_operator":
 			w.Write([]byte(`{"license":{"grantee":"qor1suspended"},"active":false}`))
 		case "/qorechain/lightnode/v1/node/qor1active":
-			w.Write([]byte(`{"light_node":{"address":"qor1active","node_type":"sx","status":"active","last_heartbeat":"1234"}}`))
+			// The chain's real shape: {"node": ..., "found": bool}. This fixture
+			// used to serve {"light_node": ...}, which is the shape the decoder
+			// wrongly expected, so the test confirmed the bug. See chainshape_test.go.
+			w.Write([]byte(`{"node":{"address":"qor1active","node_type":"sx","status":"active","last_heartbeat":"1234"},"found":true}`))
 		case "/qorechain/lightnode/v1/node/qor1none":
 			w.WriteHeader(404)
 			w.Write([]byte(`{"code":5, "message":"light node not found", "details":[]}`))
