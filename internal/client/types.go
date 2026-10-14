@@ -1,5 +1,7 @@
 package client
 
+import "strconv"
+
 // StatusResponse from /status RPC
 type StatusResponse struct {
 	Result struct {
@@ -161,7 +163,35 @@ type RewardPoolResponse struct {
 	Outstanding              string `json:"outstanding"`
 	Distributable            string `json:"distributable"`
 	MaxRewardPerBlockPerNode string `json:"max_reward_per_block_per_node"`
+	// MaxRewardPerMonthPerNode is the ceiling stated per month, which is how
+	// the decision behind it is expressed. Chains before the per-month change
+	// do not send it; from that change on it is authoritative and the per-block
+	// field stays only for older clients. See MonthlyCeiling.
+	MaxRewardPerMonthPerNode string `json:"max_reward_per_month_per_node"`
 	Initialized              bool   `json:"initialized"`
+}
+
+// MonthlyCeiling returns the per-node ceiling in uqor per 30 days.
+//
+// When the chain states it per month, that figure is returned as is and
+// fromChain is true. Otherwise it is derived from the per-block figure and the
+// supplied cadence, which is only as good as the cadence measurement - a chain
+// that states the ceiling per block pays a different monthly amount every time
+// its block time drifts. ok is false when neither is usable.
+func (r *RewardPoolResponse) MonthlyCeiling(secondsPerBlock float64) (uqor float64, fromChain bool, ok bool) {
+	if r.MaxRewardPerMonthPerNode != "" {
+		if v, err := strconv.ParseFloat(r.MaxRewardPerMonthPerNode, 64); err == nil {
+			return v, true, true
+		}
+	}
+	if secondsPerBlock <= 0 {
+		return 0, false, false
+	}
+	perBlock, err := strconv.ParseFloat(r.MaxRewardPerBlockPerNode, 64)
+	if err != nil {
+		return 0, false, false
+	}
+	return perBlock * 2592000.0 / secondsPerBlock, false, true
 }
 
 // ReputationResponse from reputation module.

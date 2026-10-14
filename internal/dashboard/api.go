@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"math/big"
 	"net/http"
 	"strconv"
 	"time"
@@ -308,20 +307,26 @@ func (a *API) HandleRewardPool(w http.ResponseWriter, r *http.Request) {
 		"denom":                         "uqor",
 	}
 
-	// Convert the per-block ceiling into the per-month figure an operator can
-	// actually reason about, using the measured cadence rather than an assumed
-	// one. Both the cadence and the window are reported so the number can be
-	// checked instead of trusted.
-	if perBlock, ok := new(big.Float).SetString(pool.MaxRewardPerBlockPerNode); ok {
-		const window = int64(20000)
-		if bt, err := a.chain.BlockTimeSeconds(ctx, window); err == nil && bt > 0 {
-			const secondsPerMonth = 2592000.0 // 30 days
-			perMonth := new(big.Float).Mul(perBlock, big.NewFloat(secondsPerMonth/bt))
+	// The monthly ceiling. A chain that states it per month is quoted as is.
+	// One that states it per block is converted with the measured cadence, and
+	// the cadence and sample are reported so the figure can be checked rather
+	// than trusted - the conversion moves every time block time drifts.
+	const window = int64(20000)
+	bt, btErr := 0.0, error(nil)
+	if pool.MaxRewardPerMonthPerNode == "" {
+		bt, btErr = a.chain.BlockTimeSeconds(ctx, window)
+		if btErr != nil {
+			a.logger.Debug("cadence measurement failed; monthly ceiling omitted", "error", btErr)
+		}
+	}
+	if perMonth, fromChain, ok := pool.MonthlyCeiling(bt); ok {
+		resp["max_reward_per_month_per_node"] = strconv.FormatFloat(perMonth, 'f', 0, 64)
+		if fromChain {
+			resp["monthly_ceiling_source"] = "chain"
+		} else {
+			resp["monthly_ceiling_source"] = "derived_from_per_block"
 			resp["block_time_seconds"] = bt
 			resp["block_time_sample_blocks"] = window
-			resp["max_reward_per_month_per_node"] = perMonth.Text('f', 0)
-		} else if err != nil {
-			a.logger.Debug("cadence measurement failed; monthly ceiling omitted", "error", err)
 		}
 	}
 
