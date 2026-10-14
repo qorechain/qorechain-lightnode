@@ -122,19 +122,35 @@ class MainActivity : AppCompatActivity() {
         val sb = StringBuilder("REWARD POOL\n")
         sb.append("reserved       ").append(qor(o.optString("reserved"))).append(" QOR (nobody earned it)\n")
         sb.append("distributable  ").append(qor(o.optString("distributable"))).append(" QOR\n")
-        if (o.has("max_reward_per_month_per_node")) {
-            sb.append("ceiling/node   ").append(qor(o.getString("max_reward_per_month_per_node"))).append(" QOR/month")
-            if (o.optBoolean("monthly_ceiling_from_chain")) {
-                sb.append(" (stated by the chain)")
-            } else {
-                // Derived: the chain states it per block, so the monthly value
-                // moves with block time. Show the inputs, not just the result.
-                sb.append("\n               from ").append(o.optString("max_reward_per_block_per_node"))
-                    .append(" uqor/block at ").append("%.3f".format(o.optDouble("block_time_seconds")))
-                    .append(" s/block")
+        // The chain states a monthly bound from v3.2.3 but fills it even while
+        // the switch that makes it the bound in force is off. Show which one
+        // applies when the chain says so; otherwise show both, each with its
+        // condition, and single neither out.
+        when {
+            o.has("bound_in_force_per_month") -> {
+                sb.append("ceiling/node   ").append(qor(o.getString("bound_in_force_per_month"))).append(" QOR/month")
+                if (o.optBoolean("monthly_cap_active")) {
+                    sb.append(" (monthly bound, chain v3.2.3+)")
+                } else {
+                    sb.append("\n               from ").append(o.optString("max_reward_per_block_per_node"))
+                        .append(" uqor/block at ").append("%.3f".format(o.optDouble("block_time_seconds")))
+                        .append(" s/block")
+                    if (o.has("max_reward_per_month_per_node")) {
+                        sb.append("\n               ").append(qor(o.getString("max_reward_per_month_per_node")))
+                            .append(" QOR/month from the v3.2.3 upgrade")
+                    }
+                }
             }
-        } else {
-            sb.append("ceiling/node   ").append(o.optString("max_reward_per_block_per_node")).append(" uqor/block")
+            else -> {
+                if (o.has("max_reward_per_month_per_node")) {
+                    sb.append("monthly bound  ").append(qor(o.getString("max_reward_per_month_per_node")))
+                        .append(" QOR/month (once active)\n")
+                }
+                if (o.has("per_block_bound_as_monthly")) {
+                    sb.append("per-block bnd  ").append(qor(o.getString("per_block_bound_as_monthly")))
+                        .append(" QOR/month (until then)")
+                }
+            }
         }
         return sb.toString()
     }

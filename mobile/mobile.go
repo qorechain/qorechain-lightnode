@@ -180,15 +180,27 @@ func (n *Node) RewardPoolJSON() string {
 		"denom":                         "uqor",
 	}
 	bt := 0.0
-	if pool.MaxRewardPerMonthPerNode == "" {
-		if v, err := n.chain.BlockTimeSeconds(ctx, 20000); err == nil {
-			bt = v
-			out["block_time_seconds"] = bt
-		}
+	if v, err := n.chain.BlockTimeSeconds(ctx, 20000); err == nil {
+		bt = v
+		out["block_time_seconds"] = bt
 	}
-	if perMonth, fromChain, ok := pool.MonthlyCeiling(bt); ok {
-		out["max_reward_per_month_per_node"] = strconv.FormatFloat(perMonth, 'f', 0, 64)
-		out["monthly_ceiling_from_chain"] = fromChain
+	// Both bounds, each with its condition: the chain does not say which one
+	// is in force (see client.RewardPoolResponse.Ceilings).
+	stated, hasStated, perBlock, hasPerBlock := pool.Ceilings(bt)
+	if hasStated {
+		out["max_reward_per_month_per_node"] = strconv.FormatFloat(stated, 'f', 0, 64)
+	}
+	if hasPerBlock {
+		out["per_block_bound_as_monthly"] = strconv.FormatFloat(perBlock, 'f', 0, 64)
+	}
+	if active, known := n.chain.MonthlyCapActive(ctx); known {
+		out["monthly_cap_active"] = active
+		switch {
+		case active && hasStated:
+			out["bound_in_force_per_month"] = strconv.FormatFloat(stated, 'f', 0, 64)
+		case !active && hasPerBlock:
+			out["bound_in_force_per_month"] = strconv.FormatFloat(perBlock, 'f', 0, 64)
+		}
 	}
 	return toJSON(out)
 }

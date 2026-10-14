@@ -307,26 +307,38 @@ func (a *API) HandleRewardPool(w http.ResponseWriter, r *http.Request) {
 		"denom":                         "uqor",
 	}
 
-	// The monthly ceiling. A chain that states it per month is quoted as is.
-	// One that states it per block is converted with the measured cadence, and
-	// the cadence and sample are reported so the figure can be checked rather
-	// than trusted - the conversion moves every time block time drifts.
+	// Both bounds the chain may be applying. From v3.2.3 the chain states a
+	// monthly bound, but fills it even while the switch that makes it the one
+	// in force is off, and the response does not say which applies. So
+	// neither is presented as "the" ceiling: each comes with its condition.
 	const window = int64(20000)
-	bt, btErr := 0.0, error(nil)
-	if pool.MaxRewardPerMonthPerNode == "" {
-		bt, btErr = a.chain.BlockTimeSeconds(ctx, window)
-		if btErr != nil {
-			a.logger.Debug("cadence measurement failed; monthly ceiling omitted", "error", btErr)
-		}
+	bt, btErr := a.chain.BlockTimeSeconds(ctx, window)
+	if btErr != nil {
+		a.logger.Debug("cadence measurement failed; per-block bound not converted", "error", btErr)
 	}
-	if perMonth, fromChain, ok := pool.MonthlyCeiling(bt); ok {
-		resp["max_reward_per_month_per_node"] = strconv.FormatFloat(perMonth, 'f', 0, 64)
-		if fromChain {
-			resp["monthly_ceiling_source"] = "chain"
-		} else {
-			resp["monthly_ceiling_source"] = "derived_from_per_block"
-			resp["block_time_seconds"] = bt
-			resp["block_time_sample_blocks"] = window
+	stated, hasStated, perBlock, hasPerBlock := pool.Ceilings(bt)
+	if hasStated {
+		resp["max_reward_per_month_per_node"] = strconv.FormatFloat(stated, 'f', 0, 64)
+		resp["monthly_bound_applies"] = "from the lightnode-monthly-cap switch (chain v3.2.3); " +
+			"until then, and for the first settlement after it, the per-block bound applies"
+	}
+	if hasPerBlock {
+		resp["per_block_bound_as_monthly"] = strconv.FormatFloat(perBlock, 'f', 0, 64)
+		resp["block_time_seconds"] = bt
+		resp["block_time_sample_blocks"] = window
+	}
+
+	// Which of the two is in force, when the chain can tell us. The switch
+	// turns on with the "v3.2.3" upgrade and never turns off, so an applied
+	// plan is definitive. When it cannot be asked, both figures stand with
+	// their conditions and neither is singled out.
+	if active, known := a.chain.MonthlyCapActive(ctx); known {
+		resp["monthly_cap_active"] = active
+		switch {
+		case active && hasStated:
+			resp["bound_in_force_per_month"] = strconv.FormatFloat(stated, 'f', 0, 64)
+		case !active && hasPerBlock:
+			resp["bound_in_force_per_month"] = strconv.FormatFloat(perBlock, 'f', 0, 64)
 		}
 	}
 

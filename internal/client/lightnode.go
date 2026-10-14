@@ -99,3 +99,46 @@ func (c *Client) BlockTimeSeconds(ctx context.Context, window int64) (float64, e
 	}
 	return elapsed / blocks, nil
 }
+
+// MonthlyCapUpgrades lists every upgrade name that turns on the chain's
+// lightnode-monthly-cap switch. From chain v3.2.3 the switch is enabled at the
+// plan height of the upgrade named "v3.2.3", on mainnet and testnet alike, and
+// it is one-way: no later release turns it off.
+//
+// It is a list, not a single name, on purpose. Asking the chain about one plan
+// name is the mistake that silently locked every wallet out when sign-bytes
+// switched (see SignBytesV2Upgrades in qorechain-core): a coordinated rename
+// must be an edit to this list, not a client that quietly answers "off".
+var MonthlyCapUpgrades = []string{"v3.2.3"}
+
+// MonthlyCapActive reports whether the chain applies the monthly per-node
+// bound. known is false when the chain could not be asked, in which case the
+// caller must not pick one bound over the other.
+//
+// A chain started from genesis on v3.2.3 or later enables the switch at height
+// 0 and has no "v3.2.3" plan, so it reads as inactive here. Neither public
+// network is such a chain; on a fresh devnet the caller's two-figure display
+// is the honest fallback.
+//
+// The first settlement after the switch still uses the per-block bound once,
+// because there is no previous settlement time to prorate from. That is one
+// 100-block window and is not worth modelling.
+func (c *Client) MonthlyCapActive(ctx context.Context) (active bool, known bool) {
+	for _, name := range MonthlyCapUpgrades {
+		var resp struct {
+			Height string `json:"height"`
+		}
+		url := fmt.Sprintf("%s/cosmos/upgrade/v1beta1/applied_plan/%s", c.lcdURL, name)
+		if err := c.get(ctx, url, &resp); err != nil {
+			return false, false
+		}
+		h, err := strconv.ParseInt(resp.Height, 10, 64)
+		if err != nil {
+			return false, false
+		}
+		if h > 0 {
+			return true, true
+		}
+	}
+	return false, true
+}

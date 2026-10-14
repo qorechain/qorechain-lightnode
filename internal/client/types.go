@@ -163,35 +163,43 @@ type RewardPoolResponse struct {
 	Outstanding              string `json:"outstanding"`
 	Distributable            string `json:"distributable"`
 	MaxRewardPerBlockPerNode string `json:"max_reward_per_block_per_node"`
-	// MaxRewardPerMonthPerNode is the ceiling stated per month, which is how
-	// the decision behind it is expressed. Chains before the per-month change
-	// do not send it; from that change on it is authoritative and the per-block
-	// field stays only for older clients. See MonthlyCeiling.
+	// MaxRewardPerMonthPerNode is the monthly bound the chain states (chain
+	// v3.2.3+). It is NOT necessarily the bound in force: the chain fills it
+	// from a defaulting accessor even while the lightnode-monthly-cap switch is
+	// off, and in that state - and for the first settlement after the switch -
+	// the per-block bound still applies. The response carries no signal for
+	// which one is in force, so a client must not present this figure as
+	// authoritative on its own. See Ceilings.
 	MaxRewardPerMonthPerNode string `json:"max_reward_per_month_per_node"`
 	Initialized              bool   `json:"initialized"`
 }
 
-// MonthlyCeiling returns the per-node ceiling in uqor per 30 days.
+// Ceilings returns both per-node bounds the chain may be applying, each in uqor
+// per 30 days.
 //
-// When the chain states it per month, that figure is returned as is and
-// fromChain is true. Otherwise it is derived from the per-block figure and the
-// supplied cadence, which is only as good as the cadence measurement - a chain
-// that states the ceiling per block pays a different monthly amount every time
-// its block time drifts. ok is false when neither is usable.
-func (r *RewardPoolResponse) MonthlyCeiling(secondsPerBlock float64) (uqor float64, fromChain bool, ok bool) {
+// statedMonthly is the chain's own monthly bound (hasStated is false before
+// v3.2.3, which does not send it). It applies once the lightnode-monthly-cap
+// switch is on and a first settlement has stamped its time.
+//
+// perBlockMonthly is the per-block bound converted at secondsPerBlock. It is
+// the bound in force before that, and the only one on older chains. Its value
+// moves with block time: 1713 uqor/block was 2,000 QOR/month at 2.22 s/block
+// and ~1,381 at the 3.2151 s/block measured on mainnet on 2026-10-14.
+//
+// Neither is returned as "the" bound, because the chain's response does not
+// say which is in force. Callers show both, each with its condition.
+func (r *RewardPoolResponse) Ceilings(secondsPerBlock float64) (statedMonthly float64, hasStated bool, perBlockMonthly float64, hasPerBlock bool) {
 	if r.MaxRewardPerMonthPerNode != "" {
 		if v, err := strconv.ParseFloat(r.MaxRewardPerMonthPerNode, 64); err == nil {
-			return v, true, true
+			statedMonthly, hasStated = v, true
 		}
 	}
-	if secondsPerBlock <= 0 {
-		return 0, false, false
+	if secondsPerBlock > 0 {
+		if pb, err := strconv.ParseFloat(r.MaxRewardPerBlockPerNode, 64); err == nil {
+			perBlockMonthly, hasPerBlock = pb*2592000.0/secondsPerBlock, true
+		}
 	}
-	perBlock, err := strconv.ParseFloat(r.MaxRewardPerBlockPerNode, 64)
-	if err != nil {
-		return 0, false, false
-	}
-	return perBlock * 2592000.0 / secondsPerBlock, false, true
+	return
 }
 
 // ReputationResponse from reputation module.
