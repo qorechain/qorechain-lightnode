@@ -1,0 +1,8 @@
+<resources>
+    <!-- targetSdk 35 forces edge-to-edge, which draws content under the action
+         bar. On this screen that hid the very first line - the notice that a
+         phone node does not earn - so opt out until the layout handles insets. -->
+    <style name="Theme.QoreLightNode" parent="Theme.AppCompat.DayNight.DarkActionBar">
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>

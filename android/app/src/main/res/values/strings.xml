@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">QoreChain Light Node</string>
+    <string name="start">Start node</string>
+    <string name="stop">Stop node</string>
+    <string name="notif_channel">Light node</string>
+    <string name="notif_running">Verifying QoreChain headers</string>
+</resources>
