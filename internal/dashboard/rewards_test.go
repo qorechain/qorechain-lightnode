@@ -56,9 +56,12 @@ func chainStub(t *testing.T) *client.Client {
 	return client.New(srv.URL, srv.URL)
 }
 
+// discardLogger is the logger every test in this package uses.
+func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
 func testAPI(t *testing.T) *API {
 	t.Helper()
-	logger := slog.New(slog.DiscardHandler)
+	logger := discardLogger()
 	store, err := db.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

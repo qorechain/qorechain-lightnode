@@ -106,7 +106,7 @@ func startCmd() *cobra.Command {
 
 			fmt.Fprintf(os.Stderr, "QoreChain UX Light Node v%s starting...\n", version)
 			fmt.Fprintf(os.Stderr, "Dashboard: %s\n", dashboard.DisplayURL(cfg.Dashboard.BindAddr))
-			if warning := dashboard.ExposureWarning(cfg.Dashboard.BindAddr); warning != "" {
+			if warning := dashboard.ExposureWarningWithToken(cfg.Dashboard.BindAddr, cfg.Dashboard.Token); warning != "" {
 				fmt.Fprint(os.Stderr, warning)
 			}
 

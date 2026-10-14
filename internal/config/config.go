@@ -103,6 +103,16 @@ type TelemetryConfig struct {
 type DashboardConfig struct {
 	Enabled  bool   `toml:"enabled"`
 	BindAddr string `toml:"bind_addr"` // e.g. ":8420"
+
+	// Token, when set, is required as `Authorization: Bearer <token>` on every
+	// /api route and on /ws. Empty means no check, which is the right default
+	// for the loopback-only bind this node ships with.
+	//
+	// Set it whenever the dashboard is reachable from anywhere but this
+	// machine. QoreX has always sent this header when its pairing record has a
+	// token; until v3.1.5 nothing here read it, so a token set in the wallet
+	// bought the operator no protection at all.
+	Token string `toml:"token"`
 }
 
 // DefaultConfig returns a configuration with sensible defaults.

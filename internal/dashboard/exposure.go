@@ -54,16 +54,35 @@ func DisplayURL(bindAddr string) string {
 // Printed rather than refused: binding wider can be legitimate behind a reverse
 // proxy that adds authentication. The operator should know they have done it.
 func ExposureWarning(bindAddr string) string {
+	return ExposureWarningWithToken(bindAddr, "")
+}
+
+// ExposureWarningWithToken is ExposureWarning, told whether a dashboard token
+// is configured. An exposed dashboard WITH a token is a deliberate, defensible
+// setup - it is how QoreX pairs with a node over a LAN - so it should not be
+// shouted at in the same words as an exposed dashboard with nothing in front
+// of it.
+func ExposureWarningWithToken(bindAddr, token string) string {
 	if isLoopback(bindAddr) {
 		return ""
+	}
+	if token != "" {
+		return fmt.Sprintf(`
+  NOTE: the dashboard is bound to %s, reachable from outside this machine.
+  A token is configured, so the API and WebSocket require it. Over plain http
+  that token crosses the network in the clear: put it behind https or an SSH
+  tunnel if the path is not one you trust.
+
+`, bindAddr)
 	}
 	return fmt.Sprintf(`
   WARNING: the dashboard is bound to %s, which is reachable from outside
   this machine, and it has no authentication. Anyone who can open the port can
   read your node status, delegations, rewards and configuration.
 
-  Bind it to 127.0.0.1:8420 unless it sits behind a reverse proxy that
-  authenticates, or an SSH tunnel.
+  Set [dashboard] token in the config to require one, or bind to
+  127.0.0.1:8420 unless it sits behind a reverse proxy that authenticates, or
+  an SSH tunnel.
 
 `, bindAddr)
 }

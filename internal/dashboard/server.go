@@ -13,6 +13,7 @@ import (
 // Server serves the dashboard UI and REST API endpoints.
 type Server struct {
 	bindAddr string
+	token    string
 	logger   *slog.Logger
 	mux      *http.ServeMux
 	srv      *http.Server
@@ -20,10 +21,16 @@ type Server struct {
 	hub      *Hub
 }
 
-// New creates a dashboard server bound to the given address.
+// New creates a dashboard server bound to the given address. The token, when
+// non-empty, is required on every data route; see auth.go.
 func New(bindAddr string, api *API, logger *slog.Logger) *Server {
+	token := ""
+	if api != nil {
+		token = api.cfg.Dashboard.Token
+	}
 	s := &Server{
 		bindAddr: bindAddr,
+		token:    token,
 		logger:   logger,
 		api:      api,
 		hub:      NewHub(logger),
@@ -39,22 +46,30 @@ func (s *Server) Hub() *Hub {
 }
 
 func (s *Server) routes() {
+	// Data routes go behind the bearer token when one is configured. api is a
+	// separate mux so one wrap covers every route, present and future: adding
+	// a handler to an authenticated mux cannot forget the check.
+	api := http.NewServeMux()
+
 	// REST API endpoints
-	s.mux.HandleFunc("GET /api/status", s.api.HandleStatus)
-	s.mux.HandleFunc("GET /api/validators", s.api.HandleValidators)
-	s.mux.HandleFunc("GET /api/delegation", s.api.HandleDelegation)
-	s.mux.HandleFunc("GET /api/rewards", s.api.HandleRewards)
-	s.mux.HandleFunc("GET /api/rewardpool", s.api.HandleRewardPool)
-	s.mux.HandleFunc("GET /api/network", s.api.HandleNetwork)
-	s.mux.HandleFunc("GET /api/bridge", s.api.HandleBridge)
-	s.mux.HandleFunc("GET /api/tokenomics", s.api.HandleTokenomics)
-	s.mux.HandleFunc("GET /api/settings", s.api.HandleSettings)
+	api.HandleFunc("GET /api/status", s.api.HandleStatus)
+	api.HandleFunc("GET /api/validators", s.api.HandleValidators)
+	api.HandleFunc("GET /api/delegation", s.api.HandleDelegation)
+	api.HandleFunc("GET /api/rewards", s.api.HandleRewards)
+	api.HandleFunc("GET /api/rewardpool", s.api.HandleRewardPool)
+	api.HandleFunc("GET /api/network", s.api.HandleNetwork)
+	api.HandleFunc("GET /api/bridge", s.api.HandleBridge)
+	api.HandleFunc("GET /api/tokenomics", s.api.HandleTokenomics)
+	api.HandleFunc("GET /api/settings", s.api.HandleSettings)
 	// Alias so the embedded web UI's fetch("/api/config") resolves to the
 	// same handler — both names refer to the operator's runtime config.
-	s.mux.HandleFunc("GET /api/config", s.api.HandleSettings)
+	api.HandleFunc("GET /api/config", s.api.HandleSettings)
 
 	// WebSocket endpoint for real-time updates
-	s.mux.HandleFunc("GET /ws", s.hub.HandleWS)
+	api.HandleFunc("GET /ws", s.hub.HandleWS)
+
+	s.mux.Handle("/api/", requireToken(s.token, api))
+	s.mux.Handle("/ws", requireToken(s.token, api))
 
 	// Static assets — serve the embedded web UI
 	webFS, _ := fs.Sub(qweb.Assets, ".")
