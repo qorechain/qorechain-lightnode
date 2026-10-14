@@ -14,10 +14,11 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/client"
 	"github.com/qorechain/qorechain-lightnode/internal/config"
 	"github.com/qorechain/qorechain-lightnode/internal/daemon"
+	"github.com/qorechain/qorechain-lightnode/internal/dashboard"
 	"github.com/qorechain/qorechain-lightnode/internal/keyring"
 )
 
-const version = "3.1.5"
+const version = "3.1.6"
 
 var (
 	cfgFile string
@@ -117,7 +118,34 @@ func startCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "Running in LOCAL-ONLY mode (no chain RPC configured).\n")
 				fmt.Fprintf(os.Stderr, "Re-run 'lightnode-sx onboard' to connect to a chain.\n")
 			}
-			return d.Run(context.Background())
+
+			// The dashboard API, opt-in with [dashboard] enabled = true. An SX
+			// node is the one that registers and earns, and QoreX pairs with a
+			// node over this API ("the SX dashboard bind address", in its own
+			// pairing record) - but until 3.1.6 only the UX binary served it, so
+			// the nodes worth watching were the ones QoreX could not pair with.
+			// Off by default: a server has no reason to open a port it was not
+			// asked to, and an operator who turns it on beyond loopback gets the
+			// same exposure notice, and the same token, as the UX build.
+			ctx := context.Background()
+			if cfg.Dashboard.Enabled {
+				bind := cfg.Dashboard.BindAddr
+				if bind == "" {
+					bind = "127.0.0.1:8420"
+				}
+				api := dashboard.NewAPI(d.Chain(), d.Store(), d.LightClient(), d.Delegations(), d.Cfg(), d.Logger())
+				srv := dashboard.New(bind, api, d.Logger())
+				fmt.Fprintf(os.Stderr, "Dashboard API: %s\n", dashboard.DisplayURL(bind))
+				if warning := dashboard.ExposureWarningWithToken(bind, cfg.Dashboard.Token); warning != "" {
+					fmt.Fprint(os.Stderr, warning)
+				}
+				go func() {
+					if err := srv.Start(ctx); err != nil {
+						d.Logger().Error("dashboard server stopped", "error", err)
+					}
+				}()
+			}
+			return d.Run(ctx)
 		},
 	}
 	cmd.Flags().BoolVar(&skipOnboardingCheck, "skip-onboarding-check", false, "do not require config.toml at startup (allows local-only start)")
