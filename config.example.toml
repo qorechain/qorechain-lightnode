@@ -13,6 +13,11 @@ data_dir        = ""                   # empty = ~/.qorechain-lightnode
 keyring_backend = "file"               # file (passphrase from QORE_LIGHTNODE_KEYRING_PASSPHRASE), os, or test
 key_name        = "operator"           # the node's post-quantum key; also the qorechaind key name by default
 
+# Top-level, so before the first [table]. Placed after [dashboard], as they were
+# until 3.1.6, TOML reads them as dashboard settings and they are ignored.
+log_level  = "info"                    # debug, info, warn, error
+log_format = "text"                    # text, json
+
 # The account this node belongs to. A post-quantum node key has no address of
 # its own; it is attached to this account. Print it with: qorechaind keys show operator -a
 operator_address = ""
@@ -39,8 +44,11 @@ min_reputation    = 0.5
 enabled = true
 
 [dashboard]
+# The local API QoreX pairs with. The UX build always serves it; the SX build
+# serves it only when enabled here.
 enabled   = false
 bind_addr = "127.0.0.1:8420"
-
-log_level  = "info"
-log_format = "text"
+# When set, every /api route and /ws require `Authorization: Bearer <token>`.
+# Set it whenever bind_addr is reachable from anywhere but this machine, and
+# enter the same token in QoreX when pairing.
+token     = ""
