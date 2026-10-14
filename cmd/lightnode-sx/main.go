@@ -169,6 +169,8 @@ func statusCmd() *cobra.Command {
 					fmt.Fprintf(w, "Licence:\tunknown (%v)\n", err)
 				case !lic.Found:
 					fmt.Fprintf(w, "Licence:\tnone - buy one at https://dashboard.qorechain.io -> Tools -> Buy License\n")
+				case lic.Expired():
+					fmt.Fprintf(w, "Licence:\texpired at height %d - renew at https://dashboard.qorechain.io -> Tools -> Buy License\n", lic.ExpiresAt)
 				case !lic.Active:
 					fmt.Fprintf(w, "Licence:\tsuspended\n")
 				default:

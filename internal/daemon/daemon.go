@@ -279,6 +279,9 @@ func LicenceGate(operator string, lic client.LicenseStatus) (blocked bool, messa
 		return true, fmt.Sprintf("operator address %s has no lightnode_operator licence. "+
 			"Buy one at https://dashboard.qorechain.io -> Tools -> Buy License, and enter this operator address there; "+
 			"the on-chain grant follows and register works once it lands.", operator)
+	case lic.Expired():
+		return true, fmt.Sprintf("operator address %s holds a lightnode_operator licence that expired at height %d; "+
+			"renew it at https://dashboard.qorechain.io -> Tools -> Buy License before registering.", operator, lic.ExpiresAt)
 	case !lic.Active:
 		return true, fmt.Sprintf("operator address %s holds a lightnode_operator licence that is suspended; "+
 			"contact support through the dashboard before registering.", operator)

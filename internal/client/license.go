@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -17,8 +18,23 @@ const FeatureLightNodeOperator = "lightnode_operator"
 type LicenseStatus struct {
 	// Found is false when the chain has no grant at all for the pair.
 	Found bool
-	// Active is true when the grant exists and is not suspended.
+	// Active is true when the grant exists, is not suspended and - from chain
+	// v3.2.3 - has not expired at the height the query was served at.
 	Active bool
+	// Suspended and ExpiresAt say WHY a found grant is inactive. Before
+	// v3.2.3 the only cause was suspension, so an inactive licence was
+	// reported as "suspended"; from v3.2.3 an expired grant also reads
+	// active=false while it waits for the sweep, and the remedies differ - an
+	// expired licence is renewed, a suspended one goes to support. ExpiresAt is
+	// a block height; 0 means the grant never expires.
+	Suspended bool
+	ExpiresAt int64
+}
+
+// Expired reports whether an inactive grant is inactive because it ran out
+// rather than because it was suspended.
+func (s LicenseStatus) Expired() bool {
+	return s.Found && !s.Active && !s.Suspended && s.ExpiresAt > 0
 }
 
 // LicenseCheck asks the chain whether grantee holds the feature licence.
@@ -42,12 +58,25 @@ func (c *Client) LicenseCheck(ctx context.Context, grantee, feature string) (Lic
 	switch resp.StatusCode {
 	case http.StatusOK:
 		var out struct {
+			License struct {
+				Suspended bool `json:"suspended"`
+				// int64 fields arrive as JSON strings from the REST gateway.
+				ExpiresAt json.Number `json:"expires_at"`
+			} `json:"license"`
 			Active bool `json:"active"`
 		}
-		if err := json.Unmarshal(body, &out); err != nil {
+		dec := json.NewDecoder(strings.NewReader(string(body)))
+		dec.UseNumber()
+		if err := dec.Decode(&out); err != nil {
 			return LicenseStatus{}, fmt.Errorf("decode licence check: %w", err)
 		}
-		return LicenseStatus{Found: true, Active: out.Active}, nil
+		exp, _ := strconv.ParseInt(strings.Trim(string(out.License.ExpiresAt), `"`), 10, 64)
+		return LicenseStatus{
+			Found:     true,
+			Active:    out.Active,
+			Suspended: out.License.Suspended,
+			ExpiresAt: exp,
+		}, nil
 	case http.StatusNotFound:
 		if strings.Contains(string(body), "no license") {
 			return LicenseStatus{}, nil
