@@ -21,6 +21,9 @@ const (
 	// What the operator's bonded stake has earned. A different quantity, which
 	// moves for reasons that have nothing to do with running a node.
 	stakingUqor = "42000000"
+	// The distribution module answers with DecCoins: a decimal string with
+	// eighteen fractional digits. The API reports whole uqor.
+	stakingDecCoin = "42000000.769198585555755000"
 )
 
 // chainStub answers the handful of chain routes the rewards and status
@@ -34,7 +37,7 @@ func chainStub(t *testing.T) *client.Client {
 				`"status":"active","last_heartbeat":"3500000","total_heartbeats":"900",` +
 				`"expected_heartbeats":"1000","accumulated_rewards":"` + feeShareUqor + `"},"found":true}`))
 		case "/cosmos/distribution/v1beta1/delegators/" + testOperator + "/rewards":
-			w.Write([]byte(`{"rewards":[],"total":[{"denom":"uqor","amount":"` + stakingUqor + `"}]}`)) //nolint:errcheck
+			w.Write([]byte(`{"rewards":[],"total":[{"denom":"uqor","amount":"` + stakingDecCoin + `"}]}`)) //nolint:errcheck
 		case "/status":
 			// The light client has no verified header in a unit test, so the
 			// handler falls back to the node's own height, as it does on a node

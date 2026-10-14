@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/qorechain/qorechain-lightnode/internal/client"
@@ -231,6 +232,12 @@ func (a *API) HandleRewards(w http.ResponseWriter, r *http.Request) {
 
 	// The staking yield on the operator's bonded stake, under its own name.
 	if staking, err := a.deleg.GetTotalRewards(ctx); err == nil {
+		// Distribution answers with DecCoins (eighteen fractional digits);
+		// report whole uqor, the unit every other amount here uses and the
+		// only part that can be claimed.
+		if i := strings.IndexByte(staking, '.'); i >= 0 {
+			staking = staking[:i]
+		}
 		resp["staking_rewards"] = staking
 	} else {
 		a.logger.Debug("staking rewards fetch failed", "error", err)

@@ -72,7 +72,8 @@ func (m *Manager) SyncDelegations(ctx context.Context) error {
 // GetDelegations returns locally stored delegations.
 func (m *Manager) GetDelegations(ctx context.Context) ([]DelegationInfo, error) {
 	rows, err := m.store.Conn().QueryContext(ctx,
-		`SELECT validator, amount, updated_at FROM delegations ORDER BY amount DESC`,
+		// amount is TEXT; ordering it as text ranks "9" above "47222000000".
+		`SELECT validator, amount, updated_at FROM delegations ORDER BY CAST(amount AS INTEGER) DESC`,
 	)
 	if err != nil {
 		return nil, err
@@ -91,10 +92,14 @@ func (m *Manager) GetDelegations(ctx context.Context) ([]DelegationInfo, error) 
 }
 
 // DelegationInfo represents a delegation entry.
+//
+// The JSON keys are lower case because both readers of /api/delegation expect
+// them: the node's web dashboard (d.validator, d.amount) and QoreX. Without
+// tags Go emitted Validator/Amount/UpdatedAt and both showed empty rows.
 type DelegationInfo struct {
-	Validator string
-	Amount    string
-	UpdatedAt string
+	Validator string `json:"validator"`
+	Amount    string `json:"amount"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // GetTotalRewards returns total pending rewards from chain.

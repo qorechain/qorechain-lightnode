@@ -85,12 +85,15 @@ func New(cfg config.Config) (*Daemon, error) {
 	}
 	telem := telemetry.NewManager(chain, store, logger, intervals)
 
-	// Delegation manager — resolve operator address from keyring
-	operatorAddr := ""
-	if info, err := keys.Get(cfg.KeyName); err == nil {
-		operatorAddr = info.Address
-	}
-	delMgr := delegation.New(chain, store, logger, operatorAddr)
+	// Delegation manager - it reads staking rewards and delegations for the
+	// operator's chain account. See delegatorAddress.
+	delMgr := delegation.New(chain, store, logger, delegatorAddress(cfg, func() (string, error) {
+		info, err := keys.Get(cfg.KeyName)
+		if err != nil {
+			return "", err
+		}
+		return info.Address, nil
+	}))
 
 	// Configure multi-validator split if provided
 	if len(cfg.Delegation.Validators) > 0 {
@@ -406,6 +409,12 @@ func toTCP(addr string) string {
 
 // delegationSyncLoop periodically syncs delegation state from chain.
 func (d *Daemon) delegationSyncLoop(ctx context.Context) {
+	// Sync once at start: the ticker's first tick is five minutes away, and
+	// until it fires /api/delegation answered null on a freshly started node.
+	if err := d.delegations.SyncDelegations(ctx); err != nil {
+		d.logger.Warn("delegation sync failed", "error", err)
+	}
+
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
@@ -487,4 +496,21 @@ func buildLogger(level, format string) *slog.Logger {
 	}
 
 	return slog.New(handler)
+}
+
+// delegatorAddress is the chain account whose staking rewards and delegations
+// the node reports. It is operator_address, the funded account the node acts
+// for; every other part of the daemon already uses it. It used to be the
+// address of the keyring key, which for a post-quantum key is not a chain
+// account, so /api/rewards had no staking_rewards and /api/delegation came
+// back null for an operator holding real stake. The key's address stays as a
+// fallback for a node configured before operator_address existed.
+func delegatorAddress(cfg config.Config, keyAddress func() (string, error)) string {
+	if cfg.OperatorAddress != "" {
+		return cfg.OperatorAddress
+	}
+	if addr, err := keyAddress(); err == nil {
+		return addr
+	}
+	return ""
 }
