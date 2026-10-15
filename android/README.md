@@ -77,6 +77,14 @@ Needs Go, the Android SDK with an NDK, and JDK 17.
 JAVA_HOME=$(/usr/libexec/java_home -v 17) ./gradlew assembleDebug
 ```
 
+- Release builds (`./gradlew assembleRelease`) are signed with the QoreX
+  Android upload key, the owner's choice. The credentials come from
+  `QOREX_UPLOAD_*` in `~/.gradle/gradle.properties`, exactly as QoreX reads them,
+  and are never committed. Without them the release APK is left unsigned
+  (`app-release-unsigned.apk`) rather than signed with the debug key, so a
+  debug-signed build cannot be mistaken for a release. Signing certificate
+  SHA-256: `1d50d063b945ce38145c8388e60f86a61a48c12d42419448fe4c43d083dcdf1f`
+  (`CN=QoreX Upload, O=QoreChain, C=RO`).
 - `build-aar.sh` rebuilds `libs/qorelightnode.aar` from `../mobile`. Run it
   whenever `../internal` or `../mobile` changes, or the app ships a stale node.
 - The binding is its own Go module (`../mobile/go.mod`). `gomobile` needs

@@ -18,9 +18,34 @@ android {
         ndk { abiFilters += "arm64-v8a" }
     }
 
+    // Signed with the same upload key as QoreX Android (owner's decision,
+    // 2026-10-16). Credentials are supplied out-of-band, exactly as QoreX does:
+    // QOREX_UPLOAD_* in ~/.gradle/gradle.properties or -P. Never committed.
+    //
+    // One deliberate difference from QoreX: without the key a release build is
+    // left UNSIGNED (app-release-unsigned.apk) rather than falling back to the
+    // debug key, so a debug-signed APK can never be mistaken for a release and
+    // published.
+    val uploadKey = providers.gradleProperty("QOREX_UPLOAD_STORE_FILE")
+    signingConfigs {
+        if (uploadKey.isPresent) {
+            create("release") {
+                storeFile = file(uploadKey.get())
+                storePassword = providers.gradleProperty("QOREX_UPLOAD_STORE_PASSWORD").get()
+                keyAlias = providers.gradleProperty("QOREX_UPLOAD_KEY_ALIAS").get()
+                keyPassword = providers.gradleProperty("QOREX_UPLOAD_KEY_PASSWORD").get()
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // Off on purpose: R8 would strip the gomobile bridge (go.Seq and the
+            // generated mobile.* classes are reached through JNI, not Kotlin).
             isMinifyEnabled = false
+            if (uploadKey.isPresent) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
