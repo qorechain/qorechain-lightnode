@@ -160,6 +160,12 @@ func (s *cliSigner) Submit(ctx context.Context, keyName, pqcKey string, txArgs .
 // awaitInclusion polls for txHash until it is in a block or inclusionWait
 // passes, and returns the block's result.
 func (s *cliSigner) awaitInclusion(ctx context.Context, txHash string) (txResult, error) {
+	// The hash comes back from qorechaind's own output and goes back to it as
+	// an argument. It is passed as argv, never through a shell, but anything
+	// other than a hex digest is refused rather than handed to a process.
+	if !isHexHash(txHash) {
+		return txResult{TxHash: txHash}, fmt.Errorf("broadcast returned an unreadable tx hash %q", txHash)
+	}
 	// --keyring-backend and --home are tx flags; the query takes the node only.
 	queryArgs := []string{"query", "tx", txHash, "--node", s.node, "-o", "json"}
 	deadline := time.Now().Add(s.inclusionWait)
@@ -211,4 +217,17 @@ func (s *cliSigner) run(ctx context.Context, args []string) ([]byte, error) {
 func lastLine(s string) string {
 	lines := strings.Split(s, "\n")
 	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// isHexHash reports whether h looks like a transaction hash: 64 hex digits.
+func isHexHash(h string) bool {
+	if len(h) != 64 {
+		return false
+	}
+	for _, c := range h {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
 }

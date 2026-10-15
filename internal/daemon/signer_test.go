@@ -23,10 +23,10 @@ func fakeQorechaind(t *testing.T, blockCode string) (bin, log string) {
 echo "start $2 $$" >> ` + log + `
 case "$1 $2" in
   "tx lightnode") echo '{"body":{}}' ;;
-  "tx pqc") sleep 0.2; echo '{"txhash":"H1","code":0,"raw_log":""}' ;;
+  "tx pqc") sleep 0.2; echo '{"txhash":"E40274911E5221AECC68DBC273AB201F500B30E5E613662017C2D2F380820B7B","code":0,"raw_log":""}' ;;
   "query tx")
-    if [ -f ` + seen + ` ]; then echo '{"txhash":"H1","code":` + blockCode + `,"raw_log":"insufficient delegated stake"}'
-    else touch ` + seen + `; echo "tx (H1) not found" >&2; echo "end $2 $$" >> ` + log + `; exit 1; fi ;;
+    if [ -f ` + seen + ` ]; then echo '{"txhash":"E40274911E5221AECC68DBC273AB201F500B30E5E613662017C2D2F380820B7B","code":` + blockCode + `,"raw_log":"insufficient delegated stake"}'
+    else touch ` + seen + `; echo "tx not found" >&2; echo "end $2 $$" >> ` + log + `; exit 1; fi ;;
 esac
 echo "end $2 $$" >> ` + log + `
 `
@@ -53,7 +53,7 @@ func TestSubmitReportsTheBlockVerdict(t *testing.T) {
 
 	bin, _ = fakeQorechaind(t, "0")
 	res, err := testSigner(bin).Submit(context.Background(), "operator", "node", "lightnode", "heartbeat")
-	if err != nil || res.TxHash != "H1" {
+	if err != nil || res.TxHash != "E40274911E5221AECC68DBC273AB201F500B30E5E613662017C2D2F380820B7B" {
 		t.Fatalf("included transaction: res=%+v err=%v", res, err)
 	}
 }
@@ -111,5 +111,18 @@ func TestSubmissionsDoNotOverlap(t *testing.T) {
 	}
 	if secondGen < 0 || lastQueryBeforeSecond < 0 || lastQueryBeforeSecond > secondGen {
 		t.Fatalf("the second transaction was built before the first was in a block:\n%s", b)
+	}
+}
+
+func TestOnlyAHexDigestReachesTheQuery(t *testing.T) {
+	for h, ok := range map[string]bool{
+		"E40274911E5221AECC68DBC273AB201F500B30E5E613662017C2D2F380820B7B": true,
+		"--node=http://evil": false,
+		"":                   false,
+		"E40274911E5221AECC68DBC273AB201F500B30E5E613662017C2D2F380820B7;": false,
+	} {
+		if isHexHash(h) != ok {
+			t.Errorf("isHexHash(%q) = %v, want %v", h, !ok, ok)
+		}
 	}
 }
