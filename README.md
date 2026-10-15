@@ -1,5 +1,7 @@
 # QoreChain Light Node
 
+**v3.1.7** - the release that makes registration work end to end, found by running the whole path on a v3.2.3 devnet: licence, post-quantum key, stake, register, heartbeat, claim. **Heartbeats and claims could not reach the public RPC:** the signer rewrote `https://rpc.qore.host` to `tcp://rpc.qore.host`, which `qorechaind` refuses, so a node pointed at it would have failed every heartbeat and been marked inactive within the hour. Nobody hit this only because no node was registered yet. **A transaction is now reported only once it is in a block**, with the block's verdict: a sync broadcast's code 0 means the mempool took it, and on the devnet a registration passed that check and then failed in the block. **The heartbeat and the claim no longer race:** they sign from one account, and built in the same minute the second was refused for a stale sequence (code 32). **`onboard` produced a node that could not register:** it saved the key without its public key, so `register` printed an empty `register-key-v2`; it named the key `validator` while `config.toml` said `operator`; it left `chain_id` on the testnet whatever endpoint was given; and without `QORE_LIGHTNODE_KEYRING_PASSPHRASE` it generated a key and then lost it. Keys saved by earlier versions are repaired when read. **`register` prints commands that run as printed:** each carries `--node`, the key is exported with `keys export --out` (a redirected export ended in a newline that `qorechaind` rejects), and it says when the operator account is below the chain's 1,000 QOR minimum stake instead of letting the registration fail. **The UX build has `onboard`, `keys` and `register`:** it told a new user to run `lightnode-ux onboard`, a command it did not have. Signing still needs `qorechaind`, which is published for linux/amd64 only (bundled in the SX Docker image); on macOS, Windows and Linux arm64 the node runs and verifies but cannot register yet.
+
 **v3.1.6** - fixes found by pairing QoreX with a real 3.1.5 node. **Staking rewards and delegations were read for the wrong account:** the node used its keyring key's address, which for a post-quantum key is not a chain account, so `/api/rewards` had no `staking_rewards` and `/api/delegation` was empty for an operator holding real stake; both now use `operator_address`. **The delegation table was empty in every release:** the API sent `Validator`/`Amount`, while the node's own web dashboard and QoreX read `validator`/`amount`. Delegations are also synced at start instead of five minutes later, ordered by amount instead of as text, and `staking_rewards` is reported in whole uqor. **The SX node can serve the dashboard API** (`[dashboard] enabled = true`, same token and exposure rules as UX), so QoreX can pair with the nodes that register and earn. `config.example.toml` had `log_level`/`log_format` under `[dashboard]`, where they were ignored; they are top-level now. No migration.
 
 **v3.1.5** - compatible with the chain through v3.2.3, and three fixes that change what an operator sees. **A registered node was reported as unregistered:** the client decoded the light-node queries from shapes the chain never sends (it answers `{"node":...,"found":...}`, not `{"light_node":...}`), so `status` said "not registered" and `auto_claim` never found anything to claim. **`/api/rewards` reported the staking yield** under the field QoreX shows as light-node earnings; `total_rewards` is now the light-node accrual and `staking_rewards` carries the staking figure, along with `heartbeat_age_blocks`, `auto_claim` and `last_claimed_at`, which QoreX expected and never received. **The dashboard ignored the access token** QoreX sends: set `[dashboard] token` and every `/api` route and `/ws` require it (nothing changes if you leave it empty). Also: plaintext witnesses must be real loopback addresses, not names that merely start with `127.` (QSR-2026-0020); an expired licence is reported as expired rather than suspended; and the new `/api/rewardpool` shows what is earnable, with the per-node bound as a monthly figure and which bound the chain is applying (the monthly one from chain v3.2.3). An Android build that verifies the chain, but does not register or earn, is in `android/`. No config, key or data migration: `git pull && docker compose up -d --build lightnode-sx`.
@@ -33,22 +35,32 @@ Light node client for the QoreChain network. Provides two editions:
 
 ### First-time setup
 
+Registering a node needs four things: a `lightnode_operator` licence on the operator account (bought on the dashboard, granted on chain), at least 1,000 QOR delegated from that account, a few QOR for fees, and `qorechaind` for signing. `qorechaind` is published for linux/amd64 at https://download.qore.host/mainnet/latest.json, and the SX Docker image ships it.
+
 ```bash
-# 1. Build (or pull the Docker image)
-CGO_ENABLED=1 go build -o build/lightnode-sx ./cmd/lightnode-sx/
+# 1. The node key is stored encrypted; keep this set for every command below
+export QORE_LIGHTNODE_KEYRING_PASSPHRASE='choose-a-passphrase'
 
-# 2. Run the onboarding wizard — PQC self-test + endpoint + key prompts
-build/lightnode-sx onboard
+# 2. Self-test, endpoint (mainnet: https://rpc.qore.host), node key
+lightnode-sx onboard
 
-# 3. Start the daemon
-build/lightnode-sx start
+# 3. Put the operator account's address in config.toml as operator_address
+qorechaind keys show operator -a
+
+# 4. Prints the exact commands for your account: attach the node key as its
+#    post-quantum key, delegate if below the minimum, register. Run them as printed.
+lightnode-sx register
+
+# 5. Heartbeats run on their own from here, every ~1,000 blocks
+lightnode-sx start
+lightnode-sx status
 ```
 
-The wizard asks for:
-- **Chain RPC endpoint** — paste the official RPC URL when available, or leave blank to run in local-only mode while the chain itself is still being deployed.
-- **Private key** — paste a hex-encoded Dilithium-5 key, or type `g` to generate a fresh one on this node.
+`register` checks the licence first and says where to get one if it is missing. The UX build (`lightnode-ux`) has the same commands and shares the same home directory.
 
-If you leave the endpoint blank the daemon will start in **local-only mode** — the PQC stack is fully exercised and the web dashboard shows a banner explaining the state. Re-run `onboard` once the chain is live to point at a real RPC.
+The wizard asks for:
+- **Chain RPC endpoint** - the chain id is read from it. Leave it blank to run in local-only mode.
+- **Private key** - paste a hex-encoded Dilithium-5 key, or type `g` to generate a fresh one on this node.
 
 ### Build from Source
 

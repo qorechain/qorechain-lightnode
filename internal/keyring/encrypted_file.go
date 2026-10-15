@@ -199,11 +199,8 @@ func (b *EncryptedFileBackend) Import(name string, keyType KeyType, privkey []by
 		return KeyInfo{}, fmt.Errorf("key %q already exists", name)
 	}
 
-	info := KeyInfo{
-		Name: name,
-		Type: keyType,
-	}
-	entries[name] = keyEntry{Info: info, PrivKey: privkey}
+	entries[name] = keyEntry{Info: KeyInfo{Name: name, Type: keyType}, PrivKey: privkey}
+	info := infoOf(entries[name])
 
 	if err := b.saveEntries(entries); err != nil {
 		return KeyInfo{}, err
@@ -252,7 +249,7 @@ func (b *EncryptedFileBackend) List() ([]KeyInfo, error) {
 	}
 	var infos []KeyInfo
 	for _, e := range entries {
-		infos = append(infos, e.Info)
+		infos = append(infos, infoOf(e))
 	}
 	return infos, nil
 }
@@ -284,5 +281,5 @@ func (b *EncryptedFileBackend) Get(name string) (KeyInfo, error) {
 	if !exists {
 		return KeyInfo{}, fmt.Errorf("key %q not found", name)
 	}
-	return entry.Info, nil
+	return infoOf(entry), nil
 }

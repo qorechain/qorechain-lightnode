@@ -3,6 +3,8 @@ package keyring
 import (
 	"fmt"
 	"os"
+
+	"github.com/qorechain/qorechain-lightnode/internal/pqc"
 )
 
 // KeyType identifies the cryptographic algorithm.
@@ -82,4 +84,21 @@ func New(backendType string, dataDir string) (Backend, error) {
 	default:
 		return nil, fmt.Errorf("unknown keyring backend: %s", backendType)
 	}
+}
+
+// infoOf returns an entry's metadata with its public key filled in.
+//
+// Import used to store a Dilithium-5 key without its public half, and
+// `onboard` imports, so every node set up with the wizard before v3.1.7 has a
+// key whose public key is empty. `register` then printed a register-key-v2
+// command with no key in it. The public key is derived from the private key
+// on every read, which repairs those keyrings without rewriting them.
+func infoOf(e keyEntry) KeyInfo {
+	info := e.Info
+	if info.Type == KeyTypeDilithium5 && len(info.PubKey) == 0 && len(e.PrivKey) > 0 {
+		if pub, err := pqc.DilithiumPublicKey(e.PrivKey); err == nil {
+			info.PubKey = pub
+		}
+	}
+	return info
 }

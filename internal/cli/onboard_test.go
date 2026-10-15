@@ -1,6 +1,6 @@
 //go:build cgo
 
-package main
+package cli
 
 import (
 	"bytes"

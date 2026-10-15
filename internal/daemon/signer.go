@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qorechain/qorechain-lightnode/internal/config"
@@ -30,6 +31,18 @@ const QorechaindPassphraseEnv = "QORE_LIGHTNODE_QORECHAIND_PASSPHRASE"
 // hybrid framing inside this minimal-dependency client is how the previous
 // claim path ended up signing a document the chain could never verify.
 type cliSigner struct {
+	// mu makes submissions one at a time. The heartbeat and the claim sign
+	// from the same account, and qorechaind reads the account sequence from
+	// committed state, so two transactions built before the first lands get
+	// the same sequence and the second is refused (code 32, "account sequence
+	// mismatch"). That happened on the first devnet heartbeat, 2026-10-16:
+	// the claim and the heartbeat fell due in the same minute.
+	mu sync.Mutex
+	// inclusionWait bounds how long Submit waits for a broadcast transaction
+	// to appear in a block; poll is the interval between looks.
+	inclusionWait time.Duration
+	poll          time.Duration
+
 	binary  string
 	home    string
 	backend string
@@ -74,6 +87,9 @@ func newCLISigner(cfg config.Config) (*cliSigner, string) {
 		node:    toTCP(cfg.RPCAddr),
 		fees:    hb.Fees,
 		gas:     hb.Gas,
+
+		inclusionWait: 60 * time.Second,
+		poll:          2 * time.Second,
 	}, ""
 }
 
@@ -88,7 +104,16 @@ type txResult struct {
 // qorechaind subcommand after "tx", e.g. ["lightnode", "heartbeat"]. keyName
 // is the qorechaind key holding the operator account; the post-quantum key
 // under <home>/pqc/<pqcKey>.dilithium cosigns.
+//
+// It returns only once the transaction is in a block, with the block's
+// verdict. A sync broadcast answering code 0 means the mempool accepted it,
+// not that it executed: on the devnet rehearsal a registration passed that
+// check and then failed in the block with code 13, and a heartbeat logged as
+// submitted would have been just as blind to it.
 func (s *cliSigner) Submit(ctx context.Context, keyName, pqcKey string, txArgs ...string) (txResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	common := []string{
 		"--chain-id", s.chainID,
 		"--node", s.node,
@@ -129,7 +154,35 @@ func (s *cliSigner) Submit(ctx context.Context, keyName, pqcKey string, txArgs .
 	if res.Code != 0 {
 		return res, fmt.Errorf("rejected by the chain: code %d: %s", res.Code, res.RawLog)
 	}
-	return res, nil
+	return s.awaitInclusion(ctx, res.TxHash)
+}
+
+// awaitInclusion polls for txHash until it is in a block or inclusionWait
+// passes, and returns the block's result.
+func (s *cliSigner) awaitInclusion(ctx context.Context, txHash string) (txResult, error) {
+	// --keyring-backend and --home are tx flags; the query takes the node only.
+	queryArgs := []string{"query", "tx", txHash, "--node", s.node, "-o", "json"}
+	deadline := time.Now().Add(s.inclusionWait)
+	for {
+		out, err := s.run(ctx, queryArgs)
+		if err == nil {
+			var res txResult
+			if jerr := json.Unmarshal(out, &res); jerr == nil && res.TxHash != "" {
+				if res.Code != 0 {
+					return res, fmt.Errorf("failed in the block: code %d: %s", res.Code, res.RawLog)
+				}
+				return res, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return txResult{TxHash: txHash}, fmt.Errorf("broadcast %s but not in a block after %s", txHash, s.inclusionWait)
+		}
+		select {
+		case <-ctx.Done():
+			return txResult{TxHash: txHash}, ctx.Err()
+		case <-time.After(s.poll):
+		}
+	}
 }
 
 // run executes one qorechaind invocation with the keyring passphrase on stdin.

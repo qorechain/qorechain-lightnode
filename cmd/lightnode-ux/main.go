@@ -5,21 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/qorechain/qorechain-lightnode/internal/cli"
 	"github.com/qorechain/qorechain-lightnode/internal/config"
 	"github.com/qorechain/qorechain-lightnode/internal/daemon"
 	"github.com/qorechain/qorechain-lightnode/internal/dashboard"
 )
 
-const version = "3.1.6"
-
-var (
-	cfgFile string
-	homeDir string
-)
+const version = "3.1.7"
 
 func main() {
 	root := &cobra.Command{
@@ -28,32 +23,24 @@ func main() {
 		Long:  "QoreChain UX Light Node with embedded web dashboard.",
 	}
 
-	defaultHome := defaultHomeDir()
-	root.PersistentFlags().StringVar(&cfgFile, "config", filepath.Join(defaultHome, "config.toml"), "path to config file")
-	root.PersistentFlags().StringVar(&homeDir, "home", defaultHome, "home directory for data and keys")
+	cli.Binary, cli.NodeType, cli.Version = "lightnode-ux", "ux", version
+	cli.BindRootFlags(root)
 
-	root.AddCommand(
-		startCmd(),
-		versionCmd(),
-	)
+	root.AddCommand(startCmd(), versionCmd())
+	root.AddCommand(cli.Commands()...)
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func defaultHomeDir() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".qorechain-lightnode")
-}
-
-func loadConfig() config.Config {
-	cfg, err := config.Load(cfgFile)
+// loadConfig is the shared loader with the UX edition's fixed settings. A
+// config that exists but cannot be read is an error here too: it used to fall
+// back to defaults silently, running the desktop node on the testnet.
+func loadConfig() (config.Config, error) {
+	cfg, err := cli.LoadConfig()
 	if err != nil {
-		cfg = config.DefaultConfig()
-	}
-	if homeDir != "" {
-		cfg.DataDir = homeDir
+		return cfg, err
 	}
 	// UX edition: force dashboard and node type
 	cfg.NodeType = "ux"
@@ -62,7 +49,7 @@ func loadConfig() config.Config {
 		// Loopback by default; see config.DefaultConfig for why.
 		cfg.Dashboard.BindAddr = "127.0.0.1:8420"
 	}
-	return cfg
+	return cfg, nil
 }
 
 // startCmd runs the daemon + dashboard server until interrupted.
@@ -77,14 +64,17 @@ func startCmd() *cobra.Command {
 		Short: "Start the UX light node with embedded dashboard",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !skipOnboardingCheck {
-				if _, err := os.Stat(cfgFile); errors.Is(err, os.ErrNotExist) {
-					fmt.Fprintf(os.Stderr, "No config file found at %s.\n\n", cfgFile)
+				if _, err := os.Stat(cli.CfgFile); errors.Is(err, os.ErrNotExist) {
+					fmt.Fprintf(os.Stderr, "No config file found at %s.\n\n", cli.CfgFile)
 					fmt.Fprintf(os.Stderr, "Run 'lightnode-ux onboard' to set up the node interactively\n")
 					fmt.Fprintf(os.Stderr, "Or pass --skip-onboarding-check to start with defaults.\n")
 					return fmt.Errorf("config file missing — onboarding required")
 				}
 			}
-			cfg := loadConfig()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
 			d, err := daemon.New(cfg)
 			if err != nil {
 				return fmt.Errorf("initializing daemon: %w", err)

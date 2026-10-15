@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bufio"
@@ -163,6 +163,15 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 	prn("QoreChain Light Node — onboarding wizard\n")
 	prn("==============================================\n\n")
 
+	// The default keyring refuses to open without a passphrase. Check before
+	// generating anything: this wizard used to write config.toml, generate the
+	// key and only then fail to open the keyring, so the operator lost the key
+	// it had just shown them it generated.
+	if backend := config.DefaultConfig().KeyringBackend; backend == "file" && os.Getenv(keyring.PassphraseEnv) == "" {
+		return fmt.Errorf("the node key is stored encrypted and needs a passphrase: "+
+			"set %s before running onboard, and keep it set for 'start'", keyring.PassphraseEnv)
+	}
+
 	// Step 1 — PQC self-test
 	prn("Step 1 — PQC stack check\n\n")
 	if err := runSelftest(out); err != nil {
@@ -190,12 +199,14 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 		endpoint = strings.TrimSpace(line)
 	}
 
+	chainID := ""
 	if endpoint != "" {
-		if err := pingEndpoint(endpoint); err != nil {
+		if id, err := pingEndpoint(endpoint); err != nil {
 			prn("\n  Warning: could not reach %s (%v).\n", endpoint, err)
 			prn("  Saving the URL anyway; the daemon will retry on start.\n")
 		} else {
-			prn("  Connected — endpoint is reachable.\n")
+			chainID = id
+			prn("  Connected — endpoint is reachable, chain %s.\n", id)
 		}
 	} else {
 		prn("  (no endpoint — local-only mode)\n")
@@ -257,23 +268,24 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 		cfg.RPCAddr = ""
 		cfg.PrimaryAddr = ""
 	}
-	if homeDir != "" {
-		cfg.DataDir = homeDir
+	if chainID != "" {
+		// The default is the testnet. Every command register prints carries
+		// --chain-id, so a mainnet node left on the default signs for the wrong
+		// chain and the chain refuses it.
+		cfg.ChainID = chainID
+	}
+	if HomeDir != "" {
+		cfg.DataDir = HomeDir
 	}
 
 	// Resolve config file path (defaults to <home>/config.toml).
-	cfgPath := cfgFile
+	cfgPath := CfgFile
 	if cfgPath == "" {
 		cfgPath = filepath.Join(cfg.DataDir, "config.toml")
 	}
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir config dir: %w", err)
 	}
-	if err := config.Save(cfgPath, cfg); err != nil {
-		return fmt.Errorf("save config: %w", err)
-	}
-	prn("  config.toml written to %s\n", cfgPath)
-
 	// Store the private key in the keyring.
 	keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
 	if err != nil {
@@ -289,6 +301,15 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 			return fmt.Errorf("import key into keyring: %w", err)
 		}
 	}
+	// The key the wizard saves is the key the node uses. Before v3.1.7 the
+	// key was saved as "validator" while config.toml said "operator", so
+	// register and start could not find it.
+	cfg.KeyName = keyName
+
+	if err := config.Save(cfgPath, cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	prn("  config.toml written to %s\n", cfgPath)
 	prn("  keyring entry %q saved (Dilithium-5)\n", keyName)
 	prn("\n")
 
@@ -297,10 +318,10 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 	prn("Onboarding complete.\n\n")
 	if endpoint != "" {
 		prn("  Mode:      live (RPC %s)\n", endpoint)
-		prn("  Next:      run 'lightnode-sx start' to connect\n")
+		prn("  Next:      set operator_address in config.toml, then run '%s register'\n", Binary)
 	} else {
 		prn("  Mode:      local-only (no chain RPC configured)\n")
-		prn("  Next:      run 'lightnode-sx selftest' any time to re-verify\n")
+		prn("  Next:      run '%s selftest' any time to re-verify\n", Binary)
 		prn("             the PQC stack; re-run 'onboard' once the chain is\n")
 		prn("             deployed to point this node at it.\n")
 	}
@@ -310,17 +331,18 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 
 // pingEndpoint does a /status GET with a short timeout. Returns nil if
 // the chain RPC responds with the expected shape.
-func pingEndpoint(endpoint string) error {
+func pingEndpoint(endpoint string) (string, error) {
 	// Light validation — must parse as a URL.
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("not a valid http(s) URL")
+		return "", fmt.Errorf("not a valid http(s) URL")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cli := client.New(endpoint, endpoint) // lcd defaults reuse rpc; the ping only hits /status
-	if _, err := cli.NodeStatus(ctx); err != nil {
-		return err
+	st, err := cli.NodeStatus(ctx)
+	if err != nil {
+		return "", err
 	}
-	return nil
+	return st.Result.NodeInfo.Network, nil
 }

@@ -49,6 +49,27 @@ func DilithiumKeygen() (pubkey []byte, privkey []byte, err error) {
 	return pk.Bytes(), sk.Bytes(), nil
 }
 
+// DilithiumPublicKey derives the packed public key from a packed private key.
+//
+// A FIPS-204 private key carries everything needed to recompute its public
+// half, so a key imported as a bare private key does not need its public key
+// supplied separately - and a keyring that lost it can rebuild it.
+func DilithiumPublicKey(privkey []byte) ([]byte, error) {
+	if len(privkey) != DilithiumPrivateKeySize {
+		return nil, fmt.Errorf("dilithium public key: private key is %d bytes, want %d",
+			len(privkey), DilithiumPrivateKeySize)
+	}
+	var buf [DilithiumPrivateKeySize]byte
+	copy(buf[:], privkey)
+	var sk mldsa87.PrivateKey
+	sk.Unpack(&buf)
+	pk, ok := sk.Public().(*mldsa87.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("dilithium public key: unexpected public key type")
+	}
+	return pk.Bytes(), nil
+}
+
 // DilithiumSign signs message with a packed private key.
 func DilithiumSign(privkey, message []byte) ([]byte, error) {
 	// FIPS-204 permits signing an empty message, but nothing in this codebase

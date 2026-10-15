@@ -374,7 +374,7 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 			d.logger.Warn("heartbeat failed", "error", err)
 			return
 		}
-		d.logger.Info("heartbeat submitted", "tx_hash", res.TxHash, "height", h)
+		d.logger.Info("heartbeat in a block", "tx_hash", res.TxHash, "height", h)
 	}
 
 	tick()
@@ -395,14 +395,21 @@ func (d *Daemon) heartbeatKey() string {
 	return d.cfg.KeyName
 }
 
-// toTCP normalizes an http(s):// RPC address to the tcp:// scheme the cosmos
-// CLI expects for its --node flag.
+// toTCP gives qorechaind's --node flag an address it can dial.
+//
+// A plain http:// address becomes tcp://, the cosmos CLI's own spelling. An
+// https:// address is passed through unchanged: qorechaind speaks TLS to it,
+// and rewriting it to tcp:// dropped the TLS and the port, so
+// https://rpc.qore.host became tcp://rpc.qore.host, which qorechaind refuses.
+// Every heartbeat and claim from a node pointed at the public RPC failed that
+// way until v3.1.7; it went unseen only because no node was registered yet.
+// QorechaindNode is toTCP for callers outside the daemon, such as the
+// commands `register` prints for the operator to run.
+func QorechaindNode(addr string) string { return toTCP(addr) }
+
 func toTCP(addr string) string {
 	if strings.HasPrefix(addr, "http://") {
 		return "tcp://" + strings.TrimPrefix(addr, "http://")
-	}
-	if strings.HasPrefix(addr, "https://") {
-		return "tcp://" + strings.TrimPrefix(addr, "https://")
 	}
 	return addr
 }
