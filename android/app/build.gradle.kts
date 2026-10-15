@@ -11,8 +11,8 @@ android {
         applicationId = "io.qorechain.lightnode"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3108
-        versionName = "3.1.8"
+        versionCode = 3109
+        versionName = "3.1.9"
         // The AAR carries one ABI. arm64 covers every current Android phone;
         // add further targets to build-aar.sh before widening this.
         ndk { abiFilters += "arm64-v8a" }

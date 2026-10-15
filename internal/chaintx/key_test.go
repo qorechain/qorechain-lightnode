@@ -3,6 +3,7 @@ package chaintx
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"testing"
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -71,5 +72,23 @@ func TestNewKeyRoundTripsThroughItsMnemonic(t *testing.T) {
 	back, err := OperatorKeyFromMnemonic(words)
 	if err != nil || back.Address() != k.Address() {
 		t.Fatalf("restoring from the shown mnemonic gave %s, want %s (%v)", back.Address(), k.Address(), err)
+	}
+}
+
+// Public-key prefixes printed by qorechaind v3.2.3 `tx pqc recover-key` for the
+// test mnemonic and address, --derivation adapter and bridge, 2026-10-16.
+func TestPQCDerivationMatchesQorechaind(t *testing.T) {
+	keys, err := PQCKeysFromMnemonic(testAddress, testMnemonic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"adapter": "747951c21b272716048334acbe44030849454bf1b08f3304a66656da9d5733947bc6361819",
+		"bridge":  "dfd766b6881346fc66f19203bd0853c4eb88f552a9126bf04c8bdac1e049f027332880a5ae",
+	}
+	for _, k := range keys {
+		if got := hex.EncodeToString(k.Pub)[:len(want[k.Derivation])]; got != want[k.Derivation] {
+			t.Errorf("%s public key starts %s, want %s", k.Derivation, got, want[k.Derivation])
+		}
 	}
 }

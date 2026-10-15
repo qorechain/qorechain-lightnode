@@ -664,10 +664,10 @@ derived exactly as qorechaind and Keplr derive them (m/44'/118'/0'/0/0).`,
 			}
 
 			var key chaintx.OperatorKey
-			var words string
+			var words, line string
 			if recover {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Enter the operator account's words, then Enter:")
-				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				line, err = bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 				if err != nil && line == "" {
 					return fmt.Errorf("reading the words: %w", err)
 				}
@@ -685,19 +685,36 @@ derived exactly as qorechaind and Keplr derive them (m/44'/118'/0'/0/0).`,
 				return fmt.Errorf("these words are account %s, but operator_address is %s. "+
 					"The node can only sign for the account in operator_address", addr, cfg.OperatorAddress)
 			}
+			if recover {
+				words = line
+			}
+
+			// The post-quantum key. An account set up in a wallet usually
+			// already has one, derived from the same words; the chain accepts
+			// only that key from then on, so the node must sign with it.
+			pqcKey, note, err := choosePQCKey(cmd.Context(), cfg, keys, key, words, recover)
+			if err != nil {
+				return err
+			}
+
 			if _, err := keys.Import(daemon.OperatorKeyName, keyring.KeyTypeSecp256k1, key.Bytes()); err != nil {
 				return fmt.Errorf("storing the key: %w", err)
 			}
-			if cfg.OperatorAddress == "" {
-				cfg.OperatorAddress = addr
-				if err := config.Save(CfgFile, cfg); err != nil {
-					return fmt.Errorf("key stored, but writing operator_address to %s failed: %w", CfgFile, err)
+			if pqcKey != nil {
+				if _, err := keys.Import(operatorPQCKeyName, keyring.KeyTypeDilithium5, pqcKey.Priv); err != nil {
+					return fmt.Errorf("storing the post-quantum key: %w", err)
 				}
+				cfg.KeyName = operatorPQCKeyName
+			}
+			cfg.OperatorAddress = addr
+			if err := config.Save(CfgFile, cfg); err != nil {
+				return fmt.Errorf("keys stored, but writing %s failed: %w", CfgFile, err)
 			}
 
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "Operator account: %s (operator_address in %s)\n", addr, CfgFile)
-			if words != "" {
+			fmt.Fprintf(out, "Post-quantum key: %s\n", note)
+			if !recover {
 				fmt.Fprintf(out, "\nWrite these 24 words down. They are shown once and are the only backup of this account:\n\n  %s\n\n", words)
 				fmt.Fprintln(out, "Next: send this address some QOR for fees and the 1,000 QOR stake, and buy the licence for it.")
 			}
@@ -707,4 +724,53 @@ derived exactly as qorechaind and Keplr derive them (m/44'/118'/0'/0/0).`,
 	}
 	cmd.Flags().BoolVar(&recover, "recover", false, "read an existing account's words from standard input")
 	return cmd
+}
+
+// operatorPQCKeyName is the keyring entry for a post-quantum key derived from
+// the operator account's words.
+const operatorPQCKeyName = "operator-pqc"
+
+// choosePQCKey picks the post-quantum key the node signs with:
+//
+//   - the account already has one: use it if it is this node's current key or
+//     one derived from the words (wallet-adapter or dashboard derivation);
+//     anything else cannot be reproduced here, and the node could not sign;
+//   - it has none: a key derived from the words, so the account's words
+//     restore the node's key too.
+//
+// A nil key means "keep the node key onboard created" (it is the registered one).
+func choosePQCKey(ctx context.Context, cfg config.Config, keys keyring.Backend, op chaintx.OperatorKey,
+	words string, existing bool) (*chaintx.PQCKey, string, error) {
+	derived, err := chaintx.PQCKeysFromMnemonic(op.Address(), words)
+	if err != nil {
+		return nil, "", err
+	}
+	if !existing {
+		return &derived[0], "derived from these words (registered by `register`)", nil
+	}
+
+	lcd := cfg.APIAddr
+	if lcd == "" {
+		lcd = client.DeriveLCDURL(cfg.RPCAddr)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	registered, found, err := chaintx.NewSigner(lcd, cfg.ChainID, op, nil, nil).RegisteredPQCKey(ctx)
+	if err != nil {
+		return nil, "", fmt.Errorf("reading whether %s already has a post-quantum key: %w", op.Address(), err)
+	}
+	if !found {
+		return &derived[0], "derived from these words (registered by `register`)", nil
+	}
+	if info, err := keys.Get(cfg.KeyName); err == nil && bytes.Equal(info.PubKey, registered) {
+		return nil, "this node's key " + cfg.KeyName + ", already registered on the account", nil
+	}
+	for i := range derived {
+		if bytes.Equal(derived[i].Pub, registered) {
+			return &derived[i], "the one already registered on the account, derived from these words (" + derived[i].Derivation + ")", nil
+		}
+	}
+	return nil, "", errors.New("the account already has a post-quantum key that is not derived from these words " +
+		"(a wallet that generates and keeps its own key). This node cannot sign for it. Use a dedicated operator account")
 }
