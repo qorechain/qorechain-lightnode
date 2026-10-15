@@ -33,7 +33,7 @@ type Daemon struct {
 	store       *db.DB
 	chain       *client.Client
 	keys        keyring.Backend
-	signer      *cliSigner // nil when qorechaind is not available; signerNote says why
+	signer      txSubmitter // nil when no signer is available; signerNote says why
 	signerNote  string
 	lc          *lightclient.LightClient
 	telem       *telemetry.Manager
@@ -67,9 +67,19 @@ func New(cfg config.Config) (*Daemon, error) {
 		return nil, fmt.Errorf("initializing keyring: %w", err)
 	}
 
-	// The signer for on-chain messages: the qorechaind CLI pipeline that holds
-	// the operator key and produces the hybrid post-quantum signature.
-	signer, signerNote := newCLISigner(cfg)
+	// The signer for on-chain messages. Native signing needs nothing outside
+	// this binary and works on every platform; qorechaind, published for
+	// linux/amd64 only, remains the fallback for nodes set up before v3.1.8
+	// whose operator key lives in a qorechaind keyring.
+	var signer txSubmitter
+	var signerNote string
+	if native, why := NativeSigner(cfg, keys, lcdURL); native != nil {
+		signer, signerNote = &nativeSubmitter{s: native, gas: gasFromConfig(cfg)}, "native"
+	} else if cli, cliWhy := newCLISigner(cfg); cli != nil {
+		signer, signerNote = cli, "qorechaind ("+why+")"
+	} else {
+		signerNote = why + "; " + cliWhy
+	}
 
 	// Light client
 	lc, err := lightclient.New(chain, store, logger, cfg.WitnessAddrs)

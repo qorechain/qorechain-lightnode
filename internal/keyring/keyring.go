@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/qorechain/qorechain-lightnode/internal/chaintx"
 	"github.com/qorechain/qorechain-lightnode/internal/pqc"
 )
 
@@ -98,6 +99,14 @@ func infoOf(e keyEntry) KeyInfo {
 	if info.Type == KeyTypeDilithium5 && len(info.PubKey) == 0 && len(e.PrivKey) > 0 {
 		if pub, err := pqc.DilithiumPublicKey(e.PrivKey); err == nil {
 			info.PubKey = pub
+		}
+	}
+	// A secp256k1 key is an account: report its qor1 address, which is what
+	// the operator has to match against operator_address.
+	if info.Type == KeyTypeSecp256k1 && len(e.PrivKey) > 0 {
+		if k, err := chaintx.OperatorKeyFromBytes(e.PrivKey); err == nil {
+			info.PubKey = k.PubKey()
+			info.Address = k.Address()
 		}
 	}
 	return info

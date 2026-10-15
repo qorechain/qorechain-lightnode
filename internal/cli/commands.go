@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/qorechain/qorechain-lightnode/internal/chaintx"
 	"github.com/qorechain/qorechain-lightnode/internal/client"
 	"github.com/qorechain/qorechain-lightnode/internal/config"
 	"github.com/qorechain/qorechain-lightnode/internal/daemon"
@@ -50,7 +53,7 @@ func statusCmd() *cobra.Command {
 			fmt.Fprintf(w, "LC Synced Height:\t%d\n", d.LightClient().LatestHeight())
 			fmt.Fprintf(w, "LC Syncing:\t%v\n", d.LightClient().IsSyncing())
 			if ok, reason := d.Signer(); ok {
-				fmt.Fprintf(w, "Signer:\tqorechaind available\n")
+				fmt.Fprintf(w, "Signer:\t%s\n", reason)
 			} else {
 				fmt.Fprintf(w, "Signer:\tunavailable (%s)\n", reason)
 			}
@@ -93,7 +96,7 @@ func keysCmd() *cobra.Command {
 		Use:   "keys",
 		Short: "Manage keyring",
 	}
-	cmd.AddCommand(keysCreateCmd(), keysListCmd(), keysShowCmd(), keysImportCmd(), keysExportCmd())
+	cmd.AddCommand(keysCreateCmd(), keysListCmd(), keysShowCmd(), keysImportCmd(), keysExportCmd(), keysAddOperatorCmd())
 	return cmd
 }
 
@@ -283,17 +286,19 @@ func keysExportCmd() *cobra.Command {
 	return cmd
 }
 
-// registerCmd prints the exact chain commands that register this node.
+// registerCmd registers this node on chain.
 //
-// The chain requires a post-quantum hybrid signature on every transaction, so
-// registration is a generate-then-cosign pair run with qorechaind against the
-// operator's funded account. The node's Dilithium-5 key is that account's
-// post-quantum key; if it is not attached yet, the first command attaches it.
+// With the operator key in the keyring (`keys add-operator`) it signs and sends
+// every step itself: the node's Dilithium-5 key attached as the account's
+// post-quantum key, the missing stake when --delegate-to names a validator,
+// then the registration. Without it, or with --print, it prints the same steps
+// as qorechaind commands, the only path before v3.1.8.
 func registerCmd() *cobra.Command {
-	var nodeType, ver string
+	var nodeType, ver, delegateTo string
+	var printOnly bool
 	cmd := &cobra.Command{
 		Use:          "register",
-		Short:        "Print the chain commands that register this node",
+		Short:        "Register this node on chain (post-quantum key, stake, registration)",
 		SilenceUsage: true, // the refusal is the answer; usage text buries it
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := LoadConfig()
@@ -343,10 +348,12 @@ func registerCmd() *cobra.Command {
 			// "insufficient delegated stake"), after the operator has paid the fee
 			// for a transaction that cannot pass. Say so first.
 			stakeShort := ""
+			have, need := new(big.Int), new(big.Int)
+			stakeKnown := false
 			if params, err := chain.LightNodeParams(ctx); err == nil {
-				if need, ok := new(big.Int).SetString(params.MinDelegatedStake, 10); ok {
-					have := new(big.Int)
+				if _, ok := need.SetString(params.MinDelegatedStake, 10); ok {
 					if dels, err := chain.Delegations(ctx, cfg.OperatorAddress); err == nil {
+						stakeKnown = true
 						for _, d := range dels {
 							if a, ok := new(big.Int).SetString(d.Balance.Amount, 10); ok {
 								have.Add(have, a)
@@ -361,6 +368,20 @@ func registerCmd() *cobra.Command {
 
 			if len(info.PubKey) == 0 {
 				return fmt.Errorf("node key %q has no public key; re-create it with: "+Binary+" keys create <name>", info.Name)
+			}
+
+			// Native signing: this binary sends the transactions itself, on any
+			// platform. The printed qorechaind commands remain for operators
+			// whose account key lives in a qorechaind keyring.
+			if !printOnly {
+				native, why := daemon.NativeSigner(cfg, keys, lcd)
+				if native != nil {
+					return registerNative(ctx, native, info.PubKey, nodeType, ver, have, need, stakeKnown, delegateTo)
+				}
+				fmt.Printf("Not signing here: %s.\n", why)
+				fmt.Printf("To let this node sign for itself, run `%s keys add-operator --recover` with the operator account's words.\n", Binary)
+				fmt.Println("Otherwise, run these with qorechaind:")
+				fmt.Println()
 			}
 			pub := hex.EncodeToString(info.PubKey)
 			// Every printed command names the node explicitly. qorechaind's
@@ -399,7 +420,77 @@ func registerCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&nodeType, "type", NodeType, "node type: sx or ux")
 	cmd.Flags().StringVar(&ver, "version", Version, "node version")
+	cmd.Flags().BoolVar(&printOnly, "print", false, "print qorechaind commands instead of signing")
+	cmd.Flags().StringVar(&delegateTo, "delegate-to", "", "qorvaloper... to delegate the missing stake to, if the account is below the minimum")
 	return cmd
+}
+
+// registerNative attaches the post-quantum key if the account has none,
+// delegates the missing stake when asked to, and registers the node, each
+// step confirmed in a block before the next.
+func registerNative(ctx context.Context, s *chaintx.Signer, nodePub []byte, nodeType, ver string,
+	have, need *big.Int, stakeKnown bool, delegateTo string) error {
+	op := s.Address()
+	done := func(what string, r chaintx.Result) {
+		fmt.Printf("  %-22s in block %d (%s)\n", what, r.Height, r.TxHash)
+	}
+	fmt.Printf("Operator %s, licence active. Signing here.\n\n", op)
+
+	exists, err := s.AccountExists(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the operator account: %w", err)
+	}
+	if !exists {
+		return chaintx.ErrNoAccount
+	}
+
+	registered, found, err := s.RegisteredPQCKey(ctx)
+	if err != nil {
+		return fmt.Errorf("reading the account's post-quantum key: %w", err)
+	}
+	switch {
+	case found && !bytes.Equal(registered, nodePub):
+		return errors.New("the operator account already has a different post-quantum key (registered elsewhere, " +
+			"for example from a wallet). This node cannot sign for it. Use a dedicated operator account")
+	case found:
+		fmt.Println("  post-quantum key       already registered")
+	default:
+		pop, err := s.SupportsProofOfPossession(ctx)
+		if err != nil {
+			return err
+		}
+		msg, err := chaintx.MsgRegisterPQCKeyV2(s.ChainID, op, s.PQCPub, s.PQCPriv, pop)
+		if err != nil {
+			return err
+		}
+		r, err := s.SubmitClassical(ctx, 400000, msg)
+		if err != nil {
+			return fmt.Errorf("registering the post-quantum key: %w", err)
+		}
+		done("post-quantum key", r)
+	}
+
+	if stakeKnown && have.Cmp(need) < 0 {
+		short := new(big.Int).Sub(need, have)
+		if delegateTo == "" {
+			return fmt.Errorf("the account has %s uqor delegated and the chain requires %s. "+
+				"Run again with --delegate-to <qorvaloper...> to delegate the missing %s uqor "+
+				"(any bonded validator counts)", have, need, short)
+		}
+		r, err := s.Submit(ctx, 400000, chaintx.MsgDelegate(op, delegateTo, chaintx.Coin{Denom: "uqor", Amount: short.String()}))
+		if err != nil {
+			return fmt.Errorf("delegating: %w", err)
+		}
+		done("delegated "+short.String()+" uqor", r)
+	}
+
+	r, err := s.Submit(ctx, 300000, chaintx.MsgRegisterLightNode(op, nodeType, ver))
+	if err != nil {
+		return fmt.Errorf("registering the node: %w", err)
+	}
+	done("light node registered", r)
+	fmt.Printf("\nRun `%s start`: it heartbeats on its own from here.\n", Binary)
+	return nil
 }
 
 // validatorsCmd queries and displays bonded validators.
@@ -540,4 +631,80 @@ func networkCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// keysAddOperatorCmd stores the operator account's secp256k1 key, so the node
+// signs its own transactions instead of driving qorechaind.
+func keysAddOperatorCmd() *cobra.Command {
+	var recover bool
+	cmd := &cobra.Command{
+		Use:   "add-operator",
+		Short: "Store the operator account key so this node can sign (new, or --recover from its words)",
+		Long: `Stores the operator account's key in this node's keyring.
+
+Without --recover a new account is created and its 24 words are shown once:
+write them down, they are the only backup. Send it QOR, then buy the licence
+for its address.
+
+With --recover the words of an existing account are read from standard input,
+for example the account a licence was already bought for. The words are
+derived exactly as qorechaind and Keplr derive them (m/44'/118'/0'/0/0).`,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := LoadConfig()
+			if err != nil {
+				return err
+			}
+			keys, err := keyring.New(cfg.KeyringBackend, cfg.DataDir)
+			if err != nil {
+				return err
+			}
+			if _, err := keys.Get(daemon.OperatorKeyName); err == nil {
+				return fmt.Errorf("the keyring already holds an operator key; remove it first if you mean to replace it")
+			}
+
+			var key chaintx.OperatorKey
+			var words string
+			if recover {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Enter the operator account's words, then Enter:")
+				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil && line == "" {
+					return fmt.Errorf("reading the words: %w", err)
+				}
+				if key, err = chaintx.OperatorKeyFromMnemonic(line); err != nil {
+					return err
+				}
+			} else {
+				if key, words, err = chaintx.NewOperatorKey(); err != nil {
+					return err
+				}
+			}
+
+			addr := key.Address()
+			if cfg.OperatorAddress != "" && cfg.OperatorAddress != addr {
+				return fmt.Errorf("these words are account %s, but operator_address is %s. "+
+					"The node can only sign for the account in operator_address", addr, cfg.OperatorAddress)
+			}
+			if _, err := keys.Import(daemon.OperatorKeyName, keyring.KeyTypeSecp256k1, key.Bytes()); err != nil {
+				return fmt.Errorf("storing the key: %w", err)
+			}
+			if cfg.OperatorAddress == "" {
+				cfg.OperatorAddress = addr
+				if err := config.Save(CfgFile, cfg); err != nil {
+					return fmt.Errorf("key stored, but writing operator_address to %s failed: %w", CfgFile, err)
+				}
+			}
+
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Operator account: %s (operator_address in %s)\n", addr, CfgFile)
+			if words != "" {
+				fmt.Fprintf(out, "\nWrite these 24 words down. They are shown once and are the only backup of this account:\n\n  %s\n\n", words)
+				fmt.Fprintln(out, "Next: send this address some QOR for fees and the 1,000 QOR stake, and buy the licence for it.")
+			}
+			fmt.Fprintf(out, "Then run `%s register`.\n", Binary)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&recover, "recover", false, "read an existing account's words from standard input")
+	return cmd
 }

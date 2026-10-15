@@ -1,6 +1,8 @@
 # QoreChain Light Node
 
-**v3.1.7** - the release that makes registration work end to end, found by running the whole path on a v3.2.3 devnet: licence, post-quantum key, stake, register, heartbeat, claim. **Heartbeats and claims could not reach the public RPC:** the signer rewrote `https://rpc.qore.host` to `tcp://rpc.qore.host`, which `qorechaind` refuses, so a node pointed at it would have failed every heartbeat and been marked inactive within the hour. Nobody hit this only because no node was registered yet. **A transaction is now reported only once it is in a block**, with the block's verdict: a sync broadcast's code 0 means the mempool took it, and on the devnet a registration passed that check and then failed in the block. **The heartbeat and the claim no longer race:** they sign from one account, and built in the same minute the second was refused for a stale sequence (code 32). **`onboard` produced a node that could not register:** it saved the key without its public key, so `register` printed an empty `register-key-v2`; it named the key `validator` while `config.toml` said `operator`; it left `chain_id` on the testnet whatever endpoint was given; and without `QORE_LIGHTNODE_KEYRING_PASSPHRASE` it generated a key and then lost it. Keys saved by earlier versions are repaired when read. **`register` prints commands that run as printed:** each carries `--node`, the key is exported with `keys export --out` (a redirected export ended in a newline that `qorechaind` rejects), and it says when the operator account is below the chain's 1,000 QOR minimum stake instead of letting the registration fail. **The UX build has `onboard`, `keys` and `register`:** it told a new user to run `lightnode-ux onboard`, a command it did not have. Signing still needs `qorechaind`, which is published for linux/amd64 only (bundled in the SX Docker image); on macOS, Windows and Linux arm64 the node runs and verifies but cannot register yet.
+**v3.1.8** - **the node signs its own transactions, on every platform.** Until now every on-chain step went through the `qorechaind` CLI, which is published for linux/amd64 only, so on macOS, Windows and Linux arm64 a node could run but never register, heartbeat or claim. The hybrid post-quantum transaction (ML-DSA-87 over the body without the PQC extension, secp256k1 over the body with it) is now built in pure Go, from the chain's own contract, and verified on a v3.2.3 devnet with classical fallback disabled, as mainnet runs: key registration with proof of possession, delegation, registration, heartbeat and claim, from macOS arm64 and from Linux arm64 and amd64 containers, with no `qorechaind` installed. `keys add-operator` stores the operator account key (new, or `--recover` from the account's words, derived exactly as qorechaind and Keplr do), and `register` then does every step itself: attaches the node key as the account's post-quantum key, delegates the missing stake with `--delegate-to`, registers. The sign-bytes version is read from the network over every plan name that switched it, and the proof of possession is sent only where the chain knows the field. `qorechaind` remains the fallback for nodes whose operator key lives in a qorechaind keyring (`register --print`). Also in this release, the 3.1.7 fixes below, which were never published on their own.
+
+**v3.1.7** (not published separately) - the release that makes registration work end to end, found by running the whole path on a v3.2.3 devnet: licence, post-quantum key, stake, register, heartbeat, claim. **Heartbeats and claims could not reach the public RPC:** the signer rewrote `https://rpc.qore.host` to `tcp://rpc.qore.host`, which `qorechaind` refuses, so a node pointed at it would have failed every heartbeat and been marked inactive within the hour. Nobody hit this only because no node was registered yet. **A transaction is now reported only once it is in a block**, with the block's verdict: a sync broadcast's code 0 means the mempool took it, and on the devnet a registration passed that check and then failed in the block. **The heartbeat and the claim no longer race:** they sign from one account, and built in the same minute the second was refused for a stale sequence (code 32). **`onboard` produced a node that could not register:** it saved the key without its public key, so `register` printed an empty `register-key-v2`; it named the key `validator` while `config.toml` said `operator`; it left `chain_id` on the testnet whatever endpoint was given; and without `QORE_LIGHTNODE_KEYRING_PASSPHRASE` it generated a key and then lost it. Keys saved by earlier versions are repaired when read. **`register` prints commands that run as printed:** each carries `--node`, the key is exported with `keys export --out` (a redirected export ended in a newline that `qorechaind` rejects), and it says when the operator account is below the chain's 1,000 QOR minimum stake instead of letting the registration fail. **The UX build has `onboard`, `keys` and `register`:** it told a new user to run `lightnode-ux onboard`, a command it did not have. Signing still needs `qorechaind`, which is published for linux/amd64 only (bundled in the SX Docker image); on macOS, Windows and Linux arm64 the node runs and verifies but cannot register yet.
 
 **v3.1.6** - fixes found by pairing QoreX with a real 3.1.5 node. **Staking rewards and delegations were read for the wrong account:** the node used its keyring key's address, which for a post-quantum key is not a chain account, so `/api/rewards` had no `staking_rewards` and `/api/delegation` was empty for an operator holding real stake; both now use `operator_address`. **The delegation table was empty in every release:** the API sent `Validator`/`Amount`, while the node's own web dashboard and QoreX read `validator`/`amount`. Delegations are also synced at start instead of five minutes later, ordered by amount instead of as text, and `staking_rewards` is reported in whole uqor. **The SX node can serve the dashboard API** (`[dashboard] enabled = true`, same token and exposure rules as UX), so QoreX can pair with the nodes that register and earn. `config.example.toml` had `log_level`/`log_format` under `[dashboard]`, where they were ignored; they are top-level now. No migration.
 
@@ -35,28 +37,30 @@ Light node client for the QoreChain network. Provides two editions:
 
 ### First-time setup
 
-Registering a node needs four things: a `lightnode_operator` licence on the operator account (bought on the dashboard, granted on chain), at least 1,000 QOR delegated from that account, a few QOR for fees, and `qorechaind` for signing. `qorechaind` is published for linux/amd64 at https://download.qore.host/mainnet/latest.json, and the SX Docker image ships it.
+Registering a node needs a `lightnode_operator` licence on the operator account (bought on the dashboard, granted on chain), at least 1,000 QOR delegated from that account to any bonded validator, and a few QOR for fees. Nothing else needs installing: the node signs its own transactions on Linux, macOS and Windows.
 
 ```bash
-# 1. The node key is stored encrypted; keep this set for every command below
+# 1. The keys are stored encrypted; keep this set for every command below
 export QORE_LIGHTNODE_KEYRING_PASSPHRASE='choose-a-passphrase'
 
 # 2. Self-test, endpoint (mainnet: https://rpc.qore.host), node key
 lightnode-sx onboard
 
-# 3. Put the operator account's address in config.toml as operator_address
-qorechaind keys show operator -a
+# 3. The operator account: the one the licence is for (--recover reads its
+#    words from standard input), or a new one (its 24 words are shown once)
+lightnode-sx keys add-operator --recover
 
-# 4. Prints the exact commands for your account: attach the node key as its
-#    post-quantum key, delegate if below the minimum, register. Run them as printed.
-lightnode-sx register
+# 4. Attaches the node key as the account's post-quantum key, delegates the
+#    missing stake if you name a validator, registers. Each step is confirmed
+#    in a block before the next.
+lightnode-sx register --delegate-to qorvaloper1...
 
 # 5. Heartbeats run on their own from here, every ~1,000 blocks
 lightnode-sx start
 lightnode-sx status
 ```
 
-`register` checks the licence first and says where to get one if it is missing. The UX build (`lightnode-ux`) has the same commands and shares the same home directory.
+`register` checks the licence first and says where to get one if it is missing. The UX build (`lightnode-ux`) has the same commands and shares the same home directory. An operator whose account key stays in a qorechaind keyring can skip step 3 and run `register --print` for the equivalent qorechaind commands.
 
 The wizard asks for:
 - **Chain RPC endpoint** - the chain id is read from it. Leave it blank to run in local-only mode.
