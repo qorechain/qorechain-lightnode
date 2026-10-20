@@ -19,7 +19,7 @@ log_level  = "info"                    # debug, info, warn, error
 log_format = "text"                    # text, json
 
 # The account this node belongs to. A post-quantum node key has no address of
-# its own; it is attached to this account. Print it with: qorechaind keys show operator -a
+# its own; it is attached to this account. `keys add-operator` sets this.
 operator_address = ""
 
 [heartbeat]

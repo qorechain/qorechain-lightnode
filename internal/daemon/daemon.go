@@ -282,22 +282,32 @@ func (d *Daemon) Signer() (ok bool, reason string) {
 	return d.signer != nil, d.signerNote
 }
 
+// LicenceSource says where a lightnode_operator licence comes from on chainID.
+// Mainnet licences are bought on the dashboard (Tools -> Light Node, for the
+// operator's own address); testnet licences are free and granted on request,
+// and the dashboard sells nothing on testnet.
+func LicenceSource(chainID string) string {
+	if chainID == "qorechain-vladi" {
+		return "buy one at https://dashboard.qorechain.io -> Tools -> Light Node, for this address"
+	}
+	return "testnet licences are free: ask the QoreChain team (nodes@qorechain.io) for one on this address"
+}
+
 // LicenceGate is what the node tells an operator whose account cannot register
 // yet. The chain refuses a registration without an active lightnode_operator
 // licence, so the node says so before anyone builds a transaction that would
 // be refused, and says where the licence comes from.
-func LicenceGate(operator string, lic client.LicenseStatus) (blocked bool, message string) {
+func LicenceGate(chainID, operator string, lic client.LicenseStatus) (blocked bool, message string) {
 	switch {
 	case !lic.Found:
-		return true, fmt.Sprintf("operator address %s has no lightnode_operator licence. "+
-			"Buy one at https://dashboard.qorechain.io -> Tools -> Buy License, and enter this operator address there; "+
-			"the on-chain grant follows and register works once it lands.", operator)
+		return true, fmt.Sprintf("operator address %s has no lightnode_operator licence: %s. "+
+			"Register works once the grant is on chain.", operator, LicenceSource(chainID))
 	case lic.Expired():
 		return true, fmt.Sprintf("operator address %s holds a lightnode_operator licence that expired at height %d; "+
-			"renew it at https://dashboard.qorechain.io -> Tools -> Buy License before registering.", operator, lic.ExpiresAt)
+			"renew it before registering (%s).", operator, lic.ExpiresAt, LicenceSource(chainID))
 	case !lic.Active:
 		return true, fmt.Sprintf("operator address %s holds a lightnode_operator licence that is suspended; "+
-			"contact support through the dashboard before registering.", operator)
+			"contact nodes@qorechain.io before registering.", operator)
 	}
 	return false, ""
 }
@@ -365,11 +375,11 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 				report("licence-error", "heartbeat: cannot check the licence", "error", err)
 				return
 			}
-			if blocked, msg := LicenceGate(d.cfg.OperatorAddress, lic); blocked {
+			if blocked, msg := LicenceGate(d.cfg.ChainID, d.cfg.OperatorAddress, lic); blocked {
 				report("no-licence", "node not registered: "+msg)
 				return
 			}
-			report("unregistered", "node not registered: licence is active, run `lightnode-sx register` and submit the printed commands",
+			report("unregistered", "node not registered: licence is active, run `register`",
 				"operator", d.cfg.OperatorAddress)
 			return
 		}

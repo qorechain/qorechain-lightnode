@@ -38,7 +38,7 @@ If you are testing changes from a fork, replace the repository URL with the fork
 The SX edition is designed for server / VPS usage.
 
 ```bash
-CGO_ENABLED=1 go build -o build/lightnode-sx ./cmd/lightnode-sx/
+CGO_ENABLED=0 go build -o build/lightnode-sx ./cmd/lightnode-sx/
 ```
 
 ### UX Edition
@@ -46,7 +46,7 @@ CGO_ENABLED=1 go build -o build/lightnode-sx ./cmd/lightnode-sx/
 The UX edition includes a dashboard experience.
 
 ```bash
-CGO_ENABLED=1 go build -o build/lightnode-ux ./cmd/lightnode-ux/
+CGO_ENABLED=0 go build -o build/lightnode-ux ./cmd/lightnode-ux/
 ```
 
 ---

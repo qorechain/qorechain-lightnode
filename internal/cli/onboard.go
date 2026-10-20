@@ -318,7 +318,7 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 	prn("Onboarding complete.\n\n")
 	if endpoint != "" {
 		prn("  Mode:      live (RPC %s)\n", endpoint)
-		prn("  Next:      set operator_address in config.toml, then run '%s register'\n", Binary)
+		prn("  Next:      '%s keys add-operator --recover' (or without --recover for a new account), then '%s register'\n", Binary, Binary)
 	} else {
 		prn("  Mode:      local-only (no chain RPC configured)\n")
 		prn("  Next:      run '%s selftest' any time to re-verify\n", Binary)

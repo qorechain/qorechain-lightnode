@@ -1,5 +1,7 @@
 # QoreChain Light Node
 
+**v3.1.10** - **`register` counts stake the way the chain does.** The chain counts only stake bonded to validators that are bonded now; `register` also counted delegations to jailed or unbonded validators, so it could pass its own check and then be refused on chain. **Licence messages follow the network:** on mainnet they point to the dashboard's Tools -> Light Node tab; on testnet, where licences are free and the dashboard sells nothing, to a free grant on request. Texts that still sent operators to create the account with qorechaind or to edit `operator_address` by hand now point to `keys add-operator`; the UX banner names `lightnode-ux`; the compose file defaults to the public RPC and marks the qorechaind mount as fallback only; the build is CGO-free and the UX port is 8420, as the docs now say. Found by the dashboard session while rewriting the public light node docs.
+
 **v3.1.9** - **an account whose wallet already registered a post-quantum key can run a node.** The chain accepts only the key on the account, and most accounts set up in a wallet have one, derived from the same words; 3.1.8 then refused to register. `keys add-operator --recover` now derives that key from the words, exactly as qorechaind `tx pqc recover-key` does (the wallet-adapter derivation, and the dashboard's older one), and the node signs with it. An account with no key gets one derived from its words, so the words restore the node's key too; a key the words cannot reproduce is refused up front, with the advice to use a dedicated account. Verified on the v3.2.3 devnet: a key registered by qorechaind from the words, then recovery, delegation, registration and heartbeat from the node.
 
 **v3.1.8** - **the node signs its own transactions, on every platform.** Until now every on-chain step went through the `qorechaind` CLI, which is published for linux/amd64 only, so on macOS, Windows and Linux arm64 a node could run but never register, heartbeat or claim. The hybrid post-quantum transaction (ML-DSA-87 over the body without the PQC extension, secp256k1 over the body with it) is now built in pure Go, from the chain's own contract, and verified on a v3.2.3 devnet with classical fallback disabled, as mainnet runs: key registration with proof of possession, delegation, registration, heartbeat and claim, from macOS arm64 and from Linux arm64 and amd64 containers, with no `qorechaind` installed. `keys add-operator` stores the operator account key (new, or `--recover` from the account's words, derived exactly as qorechaind and Keplr do), and `register` then does every step itself: attaches the node key as the account's post-quantum key, delegates the missing stake with `--delegate-to`, registers. The sign-bytes version is read from the network over every plan name that switched it, and the proof of possession is sent only where the chain knows the field. `qorechaind` remains the fallback for nodes whose operator key lives in a qorechaind keyring (`register --print`). Also in this release, the 3.1.7 fixes below, which were never published on their own.
@@ -72,17 +74,17 @@ The wizard asks for:
 
 ```bash
 # SX edition (server daemon)
-CGO_ENABLED=1 go build -o build/lightnode-sx ./cmd/lightnode-sx/
+CGO_ENABLED=0 go build -o build/lightnode-sx ./cmd/lightnode-sx/
 
 # UX edition (dashboard + daemon)
-CGO_ENABLED=1 go build -o build/lightnode-ux ./cmd/lightnode-ux/
+CGO_ENABLED=0 go build -o build/lightnode-ux ./cmd/lightnode-ux/
 ```
 
 ### Docker
 
 ```bash
 docker compose up lightnode-sx    # server edition
-docker compose up lightnode-ux    # dashboard edition (port 8080)
+docker compose up lightnode-ux    # dashboard edition (port 8420)
 ```
 
 ### Verify the PQC stack any time

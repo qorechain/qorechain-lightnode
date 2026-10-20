@@ -66,9 +66,9 @@ func statusCmd() *cobra.Command {
 				case err != nil:
 					fmt.Fprintf(w, "Licence:\tunknown (%v)\n", err)
 				case !lic.Found:
-					fmt.Fprintf(w, "Licence:\tnone - buy one at https://dashboard.qorechain.io -> Tools -> Buy License\n")
+					fmt.Fprintf(w, "Licence:\tnone - %s\n", daemon.LicenceSource(cfg.ChainID))
 				case lic.Expired():
-					fmt.Fprintf(w, "Licence:\texpired at height %d - renew at https://dashboard.qorechain.io -> Tools -> Buy License\n", lic.ExpiresAt)
+					fmt.Fprintf(w, "Licence:\texpired at height %d - %s\n", lic.ExpiresAt, daemon.LicenceSource(cfg.ChainID))
 				case !lic.Active:
 					fmt.Fprintf(w, "Licence:\tsuspended\n")
 				default:
@@ -173,9 +173,9 @@ func keysListCmd() *cobra.Command {
 // node's post-quantum key is not an account, so it has no address.
 const noAddressNote = `A Dilithium-5 key has no chain address of its own. On QoreChain a post-quantum
 key is attached to an account, it does not make one. Your operator address is the
-funded qor1... account you register the node from: create it with qorechaind
-("qorechaind keys add operator"), fund it, attach this key to it (see "register"),
-and set operator_address in config.toml.`
+funded qor1... account you register the node from. Store its key with
+"keys add-operator --recover" (or "keys add-operator" for a new account), which
+also sets operator_address; "register" then attaches this key to it.`
 
 func abbreviateHex(b []byte) string {
 	if len(b) == 0 {
@@ -314,7 +314,7 @@ func registerCmd() *cobra.Command {
 				return fmt.Errorf("node key %q not found: %w", cfg.KeyName, err)
 			}
 			if cfg.OperatorAddress == "" {
-				return fmt.Errorf("operator_address is not set in config.toml.\n\n%s\n\nThe address is printed by: qorechaind keys show operator -a", noAddressNote)
+				return fmt.Errorf("operator_address is not set.\n\n%s\n\nRun: %s keys add-operator --recover", noAddressNote, Binary)
 			}
 			if err := config.ValidateOperatorAddress(cfg.OperatorAddress); err != nil {
 				return err
@@ -333,7 +333,7 @@ func registerCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("checking the licence on %s: %w", cfg.RPCAddr, err)
 			}
-			if blocked, msg := daemon.LicenceGate(cfg.OperatorAddress, lic); blocked {
+			if blocked, msg := daemon.LicenceGate(cfg.ChainID, cfg.OperatorAddress, lic); blocked {
 				return errors.New(msg)
 			}
 			if registered, node, err := chain.LightNodeRegistration(ctx, cfg.OperatorAddress); err != nil {
@@ -352,13 +352,15 @@ func registerCmd() *cobra.Command {
 			stakeKnown := false
 			if params, err := chain.LightNodeParams(ctx); err == nil {
 				if _, ok := need.SetString(params.MinDelegatedStake, 10); ok {
-					if dels, err := chain.Delegations(ctx, cfg.OperatorAddress); err == nil {
+					// The chain counts only stake bonded to BONDED validators
+					// (staking GetDelegatorBonded). A delegation to a jailed or
+					// unbonded validator passed this check and was then refused
+					// on chain, so it is left out here too.
+					dels, derr := chain.Delegations(ctx, cfg.OperatorAddress)
+					vals, verr := chain.Validators(ctx)
+					if derr == nil && verr == nil {
 						stakeKnown = true
-						for _, d := range dels {
-							if a, ok := new(big.Int).SetString(d.Balance.Amount, 10); ok {
-								have.Add(have, a)
-							}
-						}
+						have.Set(bondedStake(dels, vals))
 						if have.Cmp(need) < 0 {
 							stakeShort = fmt.Sprintf("%s uqor delegated, %s required", have, need)
 						}
@@ -773,4 +775,23 @@ func choosePQCKey(ctx context.Context, cfg config.Config, keys keyring.Backend, 
 	}
 	return nil, "", errors.New("the account already has a post-quantum key that is not derived from these words " +
 		"(a wallet that generates and keeps its own key). This node cannot sign for it. Use a dedicated operator account")
+}
+
+// bondedStake is the stake the chain counts against min_delegated_stake: what
+// the account has delegated to validators that are bonded now.
+func bondedStake(dels []client.DelegationEntry, bondedValidators []client.ValidatorInfo) *big.Int {
+	bonded := make(map[string]bool, len(bondedValidators))
+	for _, v := range bondedValidators {
+		bonded[v.OperatorAddress] = true
+	}
+	total := new(big.Int)
+	for _, d := range dels {
+		if !bonded[d.Delegation.ValidatorAddress] {
+			continue
+		}
+		if a, ok := new(big.Int).SetString(d.Balance.Amount, 10); ok {
+			total.Add(total, a)
+		}
+	}
+	return total
 }

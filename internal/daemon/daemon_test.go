@@ -12,19 +12,19 @@ import (
 // without one is told so, and told where it comes from. The gate is the one
 // place that wording lives, so this pins it.
 func TestLicenceGateNamesTheDashboardAndTheOperatorAddress(t *testing.T) {
-	blocked, msg := LicenceGate("qor1abc", client.LicenseStatus{})
+	blocked, msg := LicenceGate("qorechain-vladi", "qor1abc", client.LicenseStatus{})
 	if !blocked {
 		t.Fatal("an operator without a licence was let through")
 	}
-	for _, want := range []string{"qor1abc", "no lightnode_operator licence", "dashboard.qorechain.io", "Buy License", "operator address"} {
+	for _, want := range []string{"qor1abc", "no lightnode_operator licence", "dashboard.qorechain.io", "Tools -> Light Node", "operator address"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("message lost %q: %q", want, msg)
 		}
 	}
-	if blocked, msg = LicenceGate("qor1abc", client.LicenseStatus{Found: true, Active: false}); !blocked || !strings.Contains(msg, "suspended") {
+	if blocked, msg = LicenceGate("qorechain-vladi", "qor1abc", client.LicenseStatus{Found: true, Active: false}); !blocked || !strings.Contains(msg, "suspended") {
 		t.Fatalf("a suspended licence must block with its reason: %v %q", blocked, msg)
 	}
-	if blocked, _ = LicenceGate("qor1abc", client.LicenseStatus{Found: true, Active: true}); blocked {
+	if blocked, _ = LicenceGate("qorechain-vladi", "qor1abc", client.LicenseStatus{Found: true, Active: true}); blocked {
 		t.Fatal("an active licence was refused")
 	}
 }
@@ -60,5 +60,14 @@ func TestHeartbeatsAreOnByDefaultAndAutoClaimIsOff(t *testing.T) {
 	}
 	if cfg.Delegation.AutoClaim || cfg.Delegation.AutoCompound {
 		t.Fatal("auto-claim must be opt-in: it spends the operator's fee balance")
+	}
+}
+
+// The dashboard sells nothing on testnet; a testnet operator must not be sent
+// there to pay for a licence that is free.
+func TestTestnetLicenceMessageDoesNotSendOperatorsToBuy(t *testing.T) {
+	_, msg := LicenceGate("qorechain-diana", "qor1abc", client.LicenseStatus{})
+	if strings.Contains(msg, "buy") || !strings.Contains(msg, "free") {
+		t.Errorf("testnet licence message = %q, want the free grant, not a purchase", msg)
 	}
 }

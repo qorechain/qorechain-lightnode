@@ -6,16 +6,15 @@ services:
     container_name: qorechain-lightnode-sx
     volumes:
       - sx-data:/root/.qorechain-lightnode
-      # The qorechaind home holding the operator key (keyring) and the exported
-      # node key under pqc/<name>.dilithium. The bundled qorechaind signs
-      # heartbeats and reward claims from it. Point QORECHAIND_HOME at yours.
+      # Only for the qorechaind fallback (nodes whose operator key lives in a
+      # qorechaind keyring). Since 3.1.8 the node signs natively from its own
+      # keyring after `keys add-operator`, and this mount is unused.
       - ${QORECHAIND_HOME:-~/.qorechaind}:/root/.qorechaind
     environment:
-      - QORECHAIN_RPC_ADDR=${QORECHAIN_RPC_ADDR:-http://host.docker.internal:26657}
+      - QORECHAIN_RPC_ADDR=${QORECHAIN_RPC_ADDR:-https://rpc.qore.host}
       # Passphrase of the node keyring (backend "file"); required, never defaulted.
       - QORE_LIGHTNODE_KEYRING_PASSPHRASE
-      # Passphrase of the qorechaind keyring that holds the operator key, piped
-      # to qorechaind on stdin so it never appears on a command line.
+      # qorechaind fallback only: passphrase of its keyring, piped on stdin.
       - QORE_LIGHTNODE_QORECHAIND_PASSPHRASE
     restart: unless-stopped
 
@@ -29,7 +28,7 @@ services:
     volumes:
       - ux-data:/root/.qorechain-lightnode
     environment:
-      - QORECHAIN_RPC_ADDR=${QORECHAIN_RPC_ADDR:-http://host.docker.internal:26657}
+      - QORECHAIN_RPC_ADDR=${QORECHAIN_RPC_ADDR:-https://rpc.qore.host}
       - QORE_LIGHTNODE_KEYRING_PASSPHRASE
     restart: unless-stopped
 

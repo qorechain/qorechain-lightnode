@@ -14,7 +14,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/dashboard"
 )
 
-const version = "3.1.9"
+const version = "3.1.10"
 
 func main() {
 	root := &cobra.Command{
