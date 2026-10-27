@@ -39,7 +39,7 @@ validators        = []
 split_weights     = []
 rebalance_enabled = true               # warn when a validator you delegate to is jailed or leaves
                                        # the active set, or your bonded stake falls below the minimum
-min_reputation    = 0.5                # used only where the network publishes reputation scores
+min_reputation    = 0.5                # warn below this validator reputation, once the network publishes scores
 
 [telemetry]
 enabled = true

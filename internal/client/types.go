@@ -202,17 +202,6 @@ func (r *RewardPoolResponse) Ceilings(secondsPerBlock float64) (statedMonthly fl
 	return
 }
 
-// ReputationResponse from reputation module.
-type ReputationResponse struct {
-	Score struct {
-		Composite float64 `json:"composite"`
-		Stake     float64 `json:"stake"`
-		Perf      float64 `json:"perf"`
-		Contrib   float64 `json:"contrib"`
-		Time      float64 `json:"time"`
-	} `json:"score"`
-}
-
 // BurnStatsResponse from burn module.
 type BurnStatsResponse struct {
 	Stats struct {

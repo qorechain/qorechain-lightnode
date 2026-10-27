@@ -16,6 +16,13 @@ import (
 // fakeLCD answers the staking, light node and reputation routes the
 // rebalancer reads. Reputation answers 501, as on both networks today.
 func fakeLCD(t *testing.T, delegations string) *httptest.Server {
+	return fakeLCDWithReputation(t, delegations, nil)
+}
+
+// fakeLCDWithReputation serves the reputation route from scores (valoper ->
+// composite_score) when scores is not nil, as the chain will once it
+// publishes them.
+func fakeLCDWithReputation(t *testing.T, delegations string, scores map[string]string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
@@ -31,6 +38,9 @@ func fakeLCD(t *testing.T, delegations string) *httptest.Server {
 			w.Write([]byte(`{"validator":{"operator_address":"qorvaloper1out","jailed":false,"status":"BOND_STATUS_UNBONDED"}}`)) //nolint:errcheck
 		case p == "/qorechain/lightnode/v1/params":
 			w.Write([]byte(`{"min_delegated_stake":"1000000000"}`)) //nolint:errcheck
+		case scores != nil && strings.HasPrefix(p, "/qorechain/reputation/v1/validator/"):
+			val := strings.TrimPrefix(p, "/qorechain/reputation/v1/validator/")
+			fmt.Fprintf(w, `{"reputation":{"address":"qorvalcons1x","operator_address":%q,"composite_score":%q}}`, val, scores[val])
 		case strings.HasPrefix(p, "/qorechain/reputation/"):
 			w.WriteHeader(http.StatusNotImplemented)
 			w.Write([]byte(`{"code":12,"message":"Not Implemented"}`)) //nolint:errcheck
@@ -99,5 +109,18 @@ func TestNoAlertsWhenAllStakeIsBonded(t *testing.T) {
 	alerts, err := r.Check(context.Background())
 	if err != nil || len(alerts) != 0 {
 		t.Fatalf("alerts %v, err %v", reasons(alerts), err)
+	}
+}
+
+func TestLowReputationAlertsOnceTheChainPublishesScores(t *testing.T) {
+	srv := fakeLCDWithReputation(t, del("qorvaloper1good", "1500000000"),
+		map[string]string{"qorvaloper1good": "0.420000000000000000"})
+	r := NewRebalancer(client.New(srv.URL, srv.URL), &Manager{address: "qor1op"}, 0.5, slog.New(slog.DiscardHandler))
+	alerts, err := r.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alerts) != 1 || alerts[0].Reason != ReasonLowReputation || alerts[0].Reputation != 0.42 {
+		t.Fatalf("alerts %+v", alerts)
 	}
 }

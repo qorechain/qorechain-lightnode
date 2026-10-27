@@ -25,10 +25,13 @@ type Rebalancer struct {
 	minReputation float64
 	logger        *slog.Logger
 
-	// reputationOff is set once the chain answers 501 for the reputation
-	// score: no network publishes a per-validator score yet, and asking every
-	// five minutes only filled the log with the same warning.
-	reputationOff bool
+	// reputationRetry is when to ask for reputation scores again after the
+	// chain answered 501: until a network publishes per-validator scores,
+	// asking every five minutes only filled the log with the same warning.
+	// The node asks again every reputationBackoff, so the alerts start on
+	// their own once the chain serves the route.
+	reputationRetry time.Time
+	reputationNoted bool
 }
 
 // NewRebalancer creates a rebalancer.
@@ -49,6 +52,10 @@ const (
 	ReasonValidatorUnbonded = "validator not in the active set"
 	ReasonLowReputation     = "reputation below threshold"
 )
+
+// reputationBackoff is how long the node waits before asking for reputation
+// scores again after the chain said it does not serve them.
+const reputationBackoff = 6 * time.Hour
 
 // RebalanceAlert describes something the operator should act on.
 type RebalanceAlert struct {
@@ -109,7 +116,7 @@ func (r *Rebalancer) Check(ctx context.Context) ([]RebalanceAlert, error) {
 		}
 	}
 
-	if !r.reputationOff {
+	if now.After(r.reputationRetry) {
 		alerts = append(alerts, r.checkReputation(ctx, dels, now)...)
 	}
 	return alerts, nil
@@ -121,20 +128,28 @@ func (r *Rebalancer) checkReputation(ctx context.Context, dels []client.Delegati
 		val := d.Delegation.ValidatorAddress
 		rep, err := r.chain.ReputationScore(ctx, val)
 		if errors.Is(err, client.ErrEndpointUnavailable) {
-			r.reputationOff = true
-			r.logger.Info("this network does not publish validator reputation scores; reputation alerts are off, validator status and stake alerts stay on")
+			r.reputationRetry = now.Add(reputationBackoff)
+			if !r.reputationNoted {
+				r.reputationNoted = true
+				r.logger.Info("this network does not publish validator reputation scores yet; asking again every 6h, validator status and stake alerts stay on")
+			}
 			return nil
 		}
 		if err != nil {
 			r.logger.Warn("failed to check reputation", "validator", val, "error", err)
 			continue
 		}
-		if rep.Score.Composite < r.minReputation {
+		score, err := rep.Composite()
+		if err != nil {
+			r.logger.Warn("unreadable reputation score", "validator", val, "composite_score", rep.CompositeScore)
+			continue
+		}
+		if score < r.minReputation {
 			alerts = append(alerts, RebalanceAlert{
 				Validator:  val,
-				Reputation: rep.Score.Composite,
+				Reputation: score,
 				Reason:     ReasonLowReputation,
-				Detail:     fmt.Sprintf("reputation %.3f, threshold %.3f", rep.Score.Composite, r.minReputation),
+				Detail:     fmt.Sprintf("reputation %.3f, threshold %.3f; consider moving this stake from your wallet", score, r.minReputation),
 				Time:       now,
 			})
 		}
