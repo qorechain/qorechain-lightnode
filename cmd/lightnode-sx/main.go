@@ -11,9 +11,10 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/cli"
 	"github.com/qorechain/qorechain-lightnode/internal/daemon"
 	"github.com/qorechain/qorechain-lightnode/internal/dashboard"
+	"github.com/qorechain/qorechain-lightnode/internal/update"
 )
 
-const version = "3.1.10"
+const version = "3.1.11"
 
 func main() {
 	root := &cobra.Command{
@@ -98,11 +99,22 @@ func startCmd() *cobra.Command {
 					}
 				}()
 			}
-			return d.Run(ctx)
+			return restartIfUpdated(d, d.Run(ctx))
 		},
 	}
 	cmd.Flags().BoolVar(&skipOnboardingCheck, "skip-onboarding-check", false, "do not require config.toml at startup (allows local-only start)")
 	return cmd
+}
+
+// restartIfUpdated execs the new binary when Run stopped for an update. On
+// success it does not return.
+func restartIfUpdated(d *daemon.Daemon, err error) error {
+	var re *daemon.RestartError
+	if !errors.As(err, &re) {
+		return err
+	}
+	d.Close()
+	return update.Restart(re.Exe)
 }
 
 // versionCmd prints the binary version.

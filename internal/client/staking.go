@@ -23,3 +23,15 @@ func (c *Client) Delegations(ctx context.Context, delegator string) ([]Delegatio
 	}
 	return resp.DelegationResponses, nil
 }
+
+// Validator returns one validator, whatever its status.
+func (c *Client) Validator(ctx context.Context, valoper string) (*ValidatorInfo, error) {
+	var resp struct {
+		Validator ValidatorInfo `json:"validator"`
+	}
+	url := fmt.Sprintf("%s/cosmos/staking/v1beta1/validators/%s", c.lcdURL, valoper)
+	if err := c.get(ctx, url, &resp); err != nil {
+		return nil, err
+	}
+	return &resp.Validator, nil
+}

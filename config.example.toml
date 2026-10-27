@@ -37,11 +37,21 @@ compound_interval = "1h"
 min_reward_claim  = "1000000"          # 1 QOR
 validators        = []
 split_weights     = []
-rebalance_enabled = true
-min_reputation    = 0.5
+rebalance_enabled = true               # warn when a validator you delegate to is jailed or leaves
+                                       # the active set, or your bonded stake falls below the minimum
+min_reputation    = 0.5                # used only where the network publishes reputation scores
 
 [telemetry]
 enabled = true
+
+[update]
+# "auto": announce new releases and install them, then restart. A release is
+# installed only if its checksums carry the QoreChain release signature and the
+# new binary runs and reports the expected version; the previous binary is kept
+# next to it as <name>.old. "notify": announce only. "off": do not check.
+# In a container, or when the binary's folder is not writable, the node only
+# announces: update the image or the file yourself.
+mode = "auto"
 
 [dashboard]
 # The local API QoreX pairs with. The UX build always serves it; the SX build

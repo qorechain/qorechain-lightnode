@@ -61,6 +61,7 @@ func (s *Server) routes() {
 	api.HandleFunc("GET /api/bridge", s.api.HandleBridge)
 	api.HandleFunc("GET /api/tokenomics", s.api.HandleTokenomics)
 	api.HandleFunc("GET /api/settings", s.api.HandleSettings)
+	api.HandleFunc("GET /api/update", s.api.HandleUpdate)
 	// Alias so the embedded web UI's fetch("/api/config") resolves to the
 	// same handler — both names refer to the operator's runtime config.
 	api.HandleFunc("GET /api/config", s.api.HandleSettings)

@@ -59,6 +59,22 @@
                 <p style="margin:8px 0;color:#9ca3af;font-size:13px">The wizard will run the PQC self-test, ask for your chain endpoint, and import or generate your validator key.</p>
             </div>
 
+            <!-- New release banner: from /api/update. With [update] mode = "auto"
+                 the node installs the release itself and restarts; otherwise
+                 it says why not and what to run. -->
+            <div x-show="updateInfo && updateInfo.update_available" x-cloak class="card mb-24" :style="'border-left:4px solid ' + (updateInfo && updateInfo.mandatory ? '#ef4444' : '#3b82f6')">
+                <div class="card-header">
+                    <span class="card-title" x-text="'Light node v' + (updateInfo ? updateInfo.latest : '') + ' is available' + (updateInfo && updateInfo.mandatory ? ' (required)' : '')"></span>
+                </div>
+                <p style="margin:8px 0" x-text="updateInfo ? updateInfo.notes : ''"></p>
+                <p style="margin:8px 0;color:#9ca3af;font-size:13px" x-show="updateInfo && updateInfo.can_install && !updateInfo.last_error">This node installs it automatically and restarts.</p>
+                <p style="margin:8px 0;color:#9ca3af;font-size:13px" x-show="updateInfo && updateInfo.last_error" x-text="'Automatic install failed: ' + (updateInfo ? updateInfo.last_error : '') + '. It retries within the hour.'"></p>
+                <div x-show="updateInfo && !updateInfo.can_install">
+                    <p style="margin:8px 0;color:#9ca3af;font-size:13px" x-text="'Not installed automatically: ' + (updateInfo ? updateInfo.blocked : '') + '. To install it:'"></p>
+                    <pre style="margin:8px 0;background:#0b0b0f;padding:12px;border-radius:4px;font-family:monospace;font-size:13px;color:#cbd5e1">lightnode-ux update</pre>
+                </div>
+            </div>
+
             <!-- OVERVIEW -->
             <div x-show="page === 'overview'" x-cloak>
                 <h1 class="page-title">Overview</h1>

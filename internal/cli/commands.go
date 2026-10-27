@@ -360,7 +360,7 @@ func registerCmd() *cobra.Command {
 					vals, verr := chain.Validators(ctx)
 					if derr == nil && verr == nil {
 						stakeKnown = true
-						have.Set(bondedStake(dels, vals))
+						have.Set(client.BondedStake(dels, vals))
 						if have.Cmp(need) < 0 {
 							stakeShort = fmt.Sprintf("%s uqor delegated, %s required", have, need)
 						}
@@ -775,23 +775,4 @@ func choosePQCKey(ctx context.Context, cfg config.Config, keys keyring.Backend, 
 	}
 	return nil, "", errors.New("the account already has a post-quantum key that is not derived from these words " +
 		"(a wallet that generates and keeps its own key). This node cannot sign for it. Use a dedicated operator account")
-}
-
-// bondedStake is the stake the chain counts against min_delegated_stake: what
-// the account has delegated to validators that are bonded now.
-func bondedStake(dels []client.DelegationEntry, bondedValidators []client.ValidatorInfo) *big.Int {
-	bonded := make(map[string]bool, len(bondedValidators))
-	for _, v := range bondedValidators {
-		bonded[v.OperatorAddress] = true
-	}
-	total := new(big.Int)
-	for _, d := range dels {
-		if !bonded[d.Delegation.ValidatorAddress] {
-			continue
-		}
-		if a, ok := new(big.Int).SetString(d.Balance.Amount, 10); ok {
-			total.Add(total, a)
-		}
-	}
-	return total
 }

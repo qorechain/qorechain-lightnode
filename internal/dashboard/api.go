@@ -16,6 +16,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/db"
 	"github.com/qorechain/qorechain-lightnode/internal/delegation"
 	"github.com/qorechain/qorechain-lightnode/internal/lightclient"
+	"github.com/qorechain/qorechain-lightnode/internal/update"
 )
 
 // API provides JSON handlers for the dashboard REST endpoints.
@@ -401,6 +402,11 @@ func (a *API) HandleTokenomics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tok)
+}
+
+// HandleUpdate reports what the node knows about newer releases.
+func (a *API) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, update.CurrentStatus())
 }
 
 // HandleSettings returns sanitized node configuration.

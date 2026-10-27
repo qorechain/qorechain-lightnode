@@ -1,5 +1,7 @@
 # QoreChain Light Node
 
+**v3.1.11** - **the node updates itself.** Every 6 hours it checks the release channel of its network; a new version is announced in the log, on the UX dashboard and at `/api/update`, and with `[update] mode = "auto"` (the default) installed and restarted into. It installs only a release whose checksums carry the QoreChain release signature (Ed25519, public key built into the binary), whose binary matches its signed checksum and which runs and reports the expected version; the previous binary stays next to it as `<name>.old`. In a container, or where the binary's folder is not writable, it only announces. `lightnode-sx update` (or `update --check`) does the same on demand. **Delegation alerts that work:** the node now warns when a validator you delegate to is jailed or leaves the active set, and when your bonded stake falls below the light node minimum, the two cases where the chain silently stops paying. The validator reputation check, which no network publishes yet, says so once instead of logging a warning every five minutes. 3.1.10 and earlier do not update themselves: install 3.1.11 by hand once.
+
 **v3.1.10** - **`register` counts stake the way the chain does.** The chain counts only stake bonded to validators that are bonded now; `register` also counted delegations to jailed or unbonded validators, so it could pass its own check and then be refused on chain. **Licence messages follow the network:** on mainnet they point to the dashboard's Tools -> Light Node tab; on testnet, where licences are free and the dashboard sells nothing, to a free grant on request. Texts that still sent operators to create the account with qorechaind or to edit `operator_address` by hand now point to `keys add-operator`; the UX banner names `lightnode-ux`; the compose file defaults to the public RPC and marks the qorechaind mount as fallback only; the build is CGO-free and the UX port is 8420, as the docs now say. Found by the dashboard session while rewriting the public light node docs.
 
 **v3.1.9** - **an account whose wallet already registered a post-quantum key can run a node.** The chain accepts only the key on the account, and most accounts set up in a wallet have one, derived from the same words; 3.1.8 then refused to register. `keys add-operator --recover` now derives that key from the words, exactly as qorechaind `tx pqc recover-key` does (the wallet-adapter derivation, and the dashboard's older one), and the node signs with it. An account with no key gets one derived from its words, so the words restore the node's key too; a key the words cannot reproduce is refused up front, with the advice to use a dedicated account. Verified on the v3.2.3 devnet: a key registered by qorechaind from the words, then recovery, delegation, registration and heartbeat from the node.
@@ -86,6 +88,17 @@ CGO_ENABLED=0 go build -o build/lightnode-ux ./cmd/lightnode-ux/
 docker compose up lightnode-sx    # server edition
 docker compose up lightnode-ux    # dashboard edition (port 8420)
 ```
+
+### Updates
+
+A running node follows its network's releases on its own (`[update] mode` in `config.toml`: `auto`, `notify` or `off`). To check or update by hand:
+
+```bash
+lightnode-sx update --check   # is there a newer release?
+lightnode-sx update           # verify, install, keep the old binary as .old; then restart the service
+```
+
+Docker nodes are told about a new release but do not modify the image: pull the new one and recreate the container.
 
 ### Verify the PQC stack any time
 

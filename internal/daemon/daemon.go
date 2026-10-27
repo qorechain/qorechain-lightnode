@@ -18,6 +18,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/keyring"
 	"github.com/qorechain/qorechain-lightnode/internal/lightclient"
 	"github.com/qorechain/qorechain-lightnode/internal/telemetry"
+	"github.com/qorechain/qorechain-lightnode/internal/update"
 )
 
 const (
@@ -40,7 +41,15 @@ type Daemon struct {
 	delegations *delegation.Manager
 	autoClaim   *delegation.AutoClaimer
 	rebalancer  *delegation.Rebalancer
+
+	restartExe string // set by the updater before it stops Run
 }
+
+// RestartError is what Run returns after the updater installed a new binary:
+// the caller closes the daemon and execs Exe.
+type RestartError struct{ Exe string }
+
+func (e *RestartError) Error() string { return "restart into the updated binary " + e.Exe }
 
 // New initializes all subsystems and returns a ready daemon.
 func New(cfg config.Config) (*Daemon, error) {
@@ -209,6 +218,21 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// 5. Periodic delegation sync
 	go d.delegationSyncLoop(ctx)
 
+	// 6. Release updates
+	base := os.Getenv("QORE_LIGHTNODE_UPDATE_BASE")
+	if base == "" {
+		base = update.DefaultBase
+	}
+	go update.Loop(ctx, &update.Updater{
+		Base:    base,
+		Network: update.Network(d.cfg.ChainID),
+		Edition: d.cfg.NodeType,
+		Current: d.cfg.Version,
+	}, d.cfg.Update.Mode, d.logger, func(exe string) {
+		d.restartExe = exe
+		cancel()
+	})
+
 	// Block until shutdown
 	<-ctx.Done()
 	d.logger.Info("daemon shutting down")
@@ -218,6 +242,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 		d.telem.Wait()
 	}
 
+	// Written before cancel, read after Done: the close orders the two.
+	if d.restartExe != "" {
+		return &RestartError{Exe: d.restartExe}
+	}
 	return nil
 }
 
@@ -444,6 +472,7 @@ func (d *Daemon) delegationSyncLoop(ctx context.Context) {
 
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
+	reported := make(map[string]time.Time)
 
 	for {
 		select {
@@ -458,15 +487,40 @@ func (d *Daemon) delegationSyncLoop(ctx context.Context) {
 				alerts, err := d.rebalancer.Check(ctx)
 				if err != nil {
 					d.logger.Warn("rebalance check failed", "error", err)
+					continue
 				}
-				for _, a := range alerts {
-					d.logger.Warn("rebalance alert",
-						"validator", a.Validator,
-						"reputation", a.Reputation,
-						"reason", a.Reason,
-					)
-				}
+				d.reportAlerts(alerts, reported)
 			}
+		}
+	}
+}
+
+// alertRepeat is how often an alert that is still true is logged again.
+const alertRepeat = time.Hour
+
+// reportAlerts logs an alert when it appears, again every alertRepeat while it
+// lasts, and once when it clears. The check runs every five minutes; logging
+// every result buried the one line that mattered.
+func (d *Daemon) reportAlerts(alerts []delegation.RebalanceAlert, reported map[string]time.Time) {
+	now := time.Now()
+	seen := make(map[string]bool, len(alerts))
+	for _, a := range alerts {
+		k := a.Key()
+		seen[k] = true
+		if last, ok := reported[k]; ok && now.Sub(last) < alertRepeat {
+			continue
+		}
+		reported[k] = now
+		attrs := []any{"reason", a.Reason, "detail", a.Detail}
+		if a.Validator != "" {
+			attrs = append(attrs, "validator", a.Validator)
+		}
+		d.logger.Warn("delegation alert", attrs...)
+	}
+	for k := range reported {
+		if !seen[k] {
+			delete(reported, k)
+			d.logger.Info("delegation alert cleared", "alert", k)
 		}
 	}
 }

@@ -37,6 +37,9 @@ document.addEventListener("alpine:init", () => {
         // Settings
         config: null,
 
+        // Release updates (/api/update)
+        updateInfo: null,
+
         // WebSocket
         ws: null,
         wsConnected: false,
@@ -44,6 +47,8 @@ document.addEventListener("alpine:init", () => {
         init() {
             this.connectWS();
             this.loadPage("overview");
+            this.fetchUpdate();
+            setInterval(() => this.fetchUpdate(), 10 * 60 * 1000);
         },
 
         navigate(p) {
@@ -151,6 +156,17 @@ document.addEventListener("alpine:init", () => {
                 this.burnStats = data.burn || null;
                 this.feeDistribution = data.fee_distribution || [];
                 this.inflationInfo = data.inflation || null;
+            }
+        },
+
+        async fetchUpdate() {
+            try {
+                const res = await fetch("/api/update");
+                if (res.ok) {
+                    this.updateInfo = await res.json();
+                }
+            } catch (_) {
+                // Older nodes have no /api/update; the banner just stays hidden.
             }
         },
 

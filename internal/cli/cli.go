@@ -84,5 +84,6 @@ func Commands() []*cobra.Command {
 		networkCmd(),
 		selftestCmd(),
 		onboardCmd(),
+		updateCmd(),
 	}
 }

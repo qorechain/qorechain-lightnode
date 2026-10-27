@@ -54,6 +54,9 @@ type Config struct {
 	// Heartbeat (on-chain liveness)
 	Heartbeat HeartbeatConfig `toml:"heartbeat"`
 
+	// Release updates
+	Update UpdateConfig `toml:"update"`
+
 	// Logging
 	LogLevel  string `toml:"log_level"`  // debug, info, warn, error
 	LogFormat string `toml:"log_format"` // text, json
@@ -115,11 +118,21 @@ type DashboardConfig struct {
 	Token string `toml:"token"`
 }
 
+// UpdateConfig controls how the node follows new releases.
+//
+// Mode is "auto" (announce and install signed releases, then restart),
+// "notify" (announce only) or "off". Empty means auto, so a config written by
+// an older version follows releases too. A node in a container, or whose
+// binary it cannot write, only announces whatever the mode.
+type UpdateConfig struct {
+	Mode string `toml:"mode"`
+}
+
 // DefaultConfig returns a configuration with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
 		NodeType:       "sx",
-		Version:        "3.1.10",
+		Version:        "3.1.11",
 		ChainID:        "qorechain-diana",
 		RPCAddr:        "http://localhost:26657",
 		GRPCAddr:       "localhost:9090",
@@ -166,6 +179,7 @@ func DefaultConfig() Config {
 			Fees:           "50000uqor",
 			Gas:            "300000",
 		},
+		Update:    UpdateConfig{Mode: "auto"},
 		LogLevel:  "info",
 		LogFormat: "text",
 	}

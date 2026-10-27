@@ -113,6 +113,20 @@ docker compose restart
 
 ---
 
+## 8a. Updates
+
+Outside Docker the node installs new releases itself (default `[update] mode = "auto"`): it checks every 6 hours, installs only releases signed with the QoreChain release key, keeps the previous binary as `<name>.old`, and restarts in place. Under systemd the restart keeps the same process, so the service stays up. On Windows the node starts the new binary and exits; if it runs as a service, set the service to restart on exit.
+
+In Docker the node only announces new releases (in the logs and at `/api/update`). Update by pulling the new image:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+By hand, outside Docker: `lightnode-sx update --check`, then `lightnode-sx update` and restart the node.
+
+---
+
 ## 9. Verify PQC Self-Test
 
 ```bash

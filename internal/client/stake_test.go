@@ -1,13 +1,9 @@
-package cli
+package client
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/qorechain/qorechain-lightnode/internal/client"
-)
-
-func del(val, amount string) client.DelegationEntry {
-	var d client.DelegationEntry
+func del(val, amount string) DelegationEntry {
+	var d DelegationEntry
 	d.Delegation.ValidatorAddress = val
 	d.Balance.Denom, d.Balance.Amount = "uqor", amount
 	return d
@@ -17,8 +13,8 @@ func del(val, amount string) client.DelegationEntry {
 // validators. Counting a jailed validator's delegation let register pass its
 // own check and then be refused on chain.
 func TestOnlyStakeOnBondedValidatorsCounts(t *testing.T) {
-	vals := []client.ValidatorInfo{{OperatorAddress: "qorvaloper1bonded"}}
-	got := bondedStake([]client.DelegationEntry{
+	vals := []ValidatorInfo{{OperatorAddress: "qorvaloper1bonded"}}
+	got := BondedStake([]DelegationEntry{
 		del("qorvaloper1bonded", "600000000"),
 		del("qorvaloper1jailed", "900000000"),
 	}, vals)
