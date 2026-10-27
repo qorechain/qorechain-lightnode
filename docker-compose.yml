@@ -1,5 +1,8 @@
 services:
   lightnode-sx:
+    # Released image (tags :latest and :v<version>); `docker compose pull`
+    # fetches a new release. Without registry access compose builds it here.
+    image: ghcr.io/qorechain/qorechain-lightnode-sx:latest
     build:
       context: .
       dockerfile: Dockerfile.sx
@@ -19,12 +22,15 @@ services:
     restart: unless-stopped
 
   lightnode-ux:
+    image: ghcr.io/qorechain/qorechain-lightnode-ux:latest
     build:
       context: .
       dockerfile: Dockerfile.ux
     container_name: qorechain-lightnode-ux
+    # Loopback only: the dashboard has no login. Set [dashboard] token and put
+    # it behind https before publishing it more widely.
     ports:
-      - "8420:8420"
+      - "127.0.0.1:8420:8420"
     volumes:
       - ux-data:/root/.qorechain-lightnode
     environment:
