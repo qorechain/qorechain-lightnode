@@ -312,13 +312,14 @@ func (d *Daemon) Signer() (ok bool, reason string) {
 
 // LicenceSource says where a lightnode_operator licence comes from on chainID.
 // Mainnet licences are bought on the dashboard (Tools -> Light Node, for the
-// operator's own address); testnet licences are free and granted on request,
-// and the dashboard sells nothing on testnet.
+// operator's own address); testnet licences are free, requested on the same
+// tab with the testnet selected and granted on chain within minutes (since
+// 2026-10-25; before that they were granted by hand on request).
 func LicenceSource(chainID string) string {
 	if chainID == "qorechain-vladi" {
 		return "buy one at https://dashboard.qorechain.io -> Tools -> Light Node, for this address"
 	}
-	return "testnet licences are free: ask the QoreChain team (nodes@qorechain.io) for one on this address"
+	return "testnet licences are free: request one at https://dashboard.qorechain.io -> Tools -> Light Node with the testnet selected, for this address; it is granted within minutes"
 }
 
 // LicenceGate is what the node tells an operator whose account cannot register
