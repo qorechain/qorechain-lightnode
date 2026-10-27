@@ -135,6 +135,10 @@ func (r *Rebalancer) checkReputation(ctx context.Context, dels []client.Delegati
 			}
 			return nil
 		}
+		if errors.Is(err, client.ErrNoScore) {
+			r.logger.Debug("validator has no reputation score yet", "validator", val)
+			continue
+		}
 		if err != nil {
 			r.logger.Warn("failed to check reputation", "validator", val, "error", err)
 			continue

@@ -132,7 +132,7 @@ type UpdateConfig struct {
 func DefaultConfig() Config {
 	return Config{
 		NodeType:       "sx",
-		Version:        "3.1.11",
+		Version:        "3.1.12",
 		ChainID:        "qorechain-diana",
 		RPCAddr:        "http://localhost:26657",
 		GRPCAddr:       "localhost:9090",

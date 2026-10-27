@@ -40,7 +40,12 @@ func fakeLCDWithReputation(t *testing.T, delegations string, scores map[string]s
 			w.Write([]byte(`{"min_delegated_stake":"1000000000"}`)) //nolint:errcheck
 		case scores != nil && strings.HasPrefix(p, "/qorechain/reputation/v1/validator/"):
 			val := strings.TrimPrefix(p, "/qorechain/reputation/v1/validator/")
-			fmt.Fprintf(w, `{"reputation":{"address":"qorvalcons1x","operator_address":%q,"composite_score":%q}}`, val, scores[val])
+			if _, ok := scores[val]; !ok {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"code":5,"message":"no reputation record"}`)) //nolint:errcheck
+				return
+			}
+			fmt.Fprintf(w, `{"reputation":{"consensus_address":"qorvalcons1x","missed_blocks":"3865632","operator_address":%q,"composite_score":%q}}`, val, scores[val])
 		case strings.HasPrefix(p, "/qorechain/reputation/"):
 			w.WriteHeader(http.StatusNotImplemented)
 			w.Write([]byte(`{"code":12,"message":"Not Implemented"}`)) //nolint:errcheck
@@ -122,5 +127,19 @@ func TestLowReputationAlertsOnceTheChainPublishesScores(t *testing.T) {
 	}
 	if len(alerts) != 1 || alerts[0].Reason != ReasonLowReputation || alerts[0].Reputation != 0.42 {
 		t.Fatalf("alerts %+v", alerts)
+	}
+}
+
+// A validator the chain has not scored yet answers 404: no alert, no warning.
+func TestValidatorWithoutAScoreIsQuiet(t *testing.T) {
+	srv := fakeLCDWithReputation(t, del("qorvaloper1good", "1500000000"), map[string]string{})
+	var log bytes.Buffer
+	r := NewRebalancer(client.New(srv.URL, srv.URL), &Manager{address: "qor1op"}, 0.5, slog.New(slog.NewTextHandler(&log, nil)))
+	alerts, err := r.Check(context.Background())
+	if err != nil || len(alerts) != 0 {
+		t.Fatalf("alerts %v, err %v", reasons(alerts), err)
+	}
+	if strings.Contains(log.String(), "WARN") {
+		t.Fatalf("a missing score was logged as a warning:\n%s", log.String())
 	}
 }

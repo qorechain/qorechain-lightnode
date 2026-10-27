@@ -43,7 +43,7 @@ import (
 )
 
 // Version is the light node version this build came from.
-func Version() string { return "3.1.11" }
+func Version() string { return "3.1.12" }
 
 // Node is a light node running inside an Android app.
 //

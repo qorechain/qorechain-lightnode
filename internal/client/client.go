@@ -16,6 +16,16 @@ import (
 // hard error, so an operator without those optional REST routes sees a clean log.
 var ErrEndpointUnavailable = errors.New("chain REST endpoint not available")
 
+// StatusError is a non-200 answer other than 501. Its text is the one get
+// always returned ("HTTP <code>: <body>"), so callers that print it are
+// unchanged; callers that need the code can read it.
+type StatusError struct {
+	Code int
+	Body string
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.Code, e.Body) }
+
 // Client connects to a QoreChain node via REST/RPC.
 type Client struct {
 	rpcURL  string
@@ -48,7 +58,7 @@ func (c *Client) get(ctx context.Context, url string, out interface{}) error {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return &StatusError{Code: resp.StatusCode, Body: string(body)}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
