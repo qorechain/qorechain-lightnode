@@ -3,7 +3,7 @@ package update
 import (
 	"context"
 	"log/slog"
-	"math/rand"
+	"math/rand" // nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used -- start-up jitter only, nothing secret
 	"sync"
 	"time"
 )

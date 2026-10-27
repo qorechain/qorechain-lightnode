@@ -246,7 +246,9 @@ func sumFor(sums []byte, name string) (string, error) {
 func selfTest(ctx context.Context, path, version string) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "version").CombinedOutput()
+	// path is the file Download just wrote, and only after its bytes matched a
+	// checksum signed with the release key; this is the one way it runs.
+	out, err := exec.CommandContext(ctx, path, "version").CombinedOutput() // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	if err != nil {
 		return fmt.Errorf("the new binary does not run here: %v: %s", err, bytes.TrimSpace(out))
 	}
