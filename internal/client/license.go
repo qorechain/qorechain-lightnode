@@ -129,16 +129,21 @@ func (c *Client) LightNodeRegistration(ctx context.Context, operator string) (re
 }
 
 // DeriveLCDURL converts an RPC URL to the REST/LCD URL of the same node: the
-// RPC port (26657) becomes the LCD port (1317), and a public "rpc." host
-// becomes its "api." sibling (rpc.qore.host -> api.qore.host). Anything else
+// RPC port (26657) becomes the LCD port (1317), and a public "rpc" host
+// becomes its "api" sibling: rpc.qore.host -> api.qore.host, and
+// rpc-testnet.qore.host -> api-testnet.qore.host. Until 3.1.13 only the first
+// form was handled, so a testnet node set up by onboard (api_addr empty) sent
+// every REST query to the RPC host and got "404 page not found". Anything else
 // is returned unchanged; set api_addr in the config for such endpoints.
 func DeriveLCDURL(rpcAddr string) string {
 	if strings.Contains(rpcAddr, "26657") {
 		return strings.Replace(rpcAddr, "26657", "1317", 1)
 	}
 	for _, scheme := range []string{"https://", "http://"} {
-		if strings.HasPrefix(rpcAddr, scheme+"rpc.") {
-			return scheme + "api." + strings.TrimPrefix(rpcAddr, scheme+"rpc.")
+		for _, sep := range []string{".", "-"} {
+			if strings.HasPrefix(rpcAddr, scheme+"rpc"+sep) {
+				return scheme + "api" + sep + strings.TrimPrefix(rpcAddr, scheme+"rpc"+sep)
+			}
 		}
 	}
 	return rpcAddr

@@ -69,6 +69,8 @@ func TestDeriveLCDURL(t *testing.T) {
 		"http://localhost:26657":            "http://localhost:1317",
 		"http://host.docker.internal:26657": "http://host.docker.internal:1317",
 		"https://rpc.qore.host":             "https://api.qore.host",
+		"https://rpc-testnet.qore.host":     "https://api-testnet.qore.host",
+		"https://rpcfoo.example.org":        "https://rpcfoo.example.org",
 		"https://rpc.testnet.qorechain.xyz": "https://api.testnet.qorechain.xyz",
 		"https://example.org/rpc":           "https://example.org/rpc",
 	} {

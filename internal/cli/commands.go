@@ -718,7 +718,7 @@ derived exactly as qorechaind and Keplr derive them (m/44'/118'/0'/0/0).`,
 			fmt.Fprintf(out, "Post-quantum key: %s\n", note)
 			if !recover {
 				fmt.Fprintf(out, "\nWrite these 24 words down. They are shown once and are the only backup of this account:\n\n  %s\n\n", words)
-				fmt.Fprintln(out, "Next: send this address some QOR for fees and the 1,000 QOR stake, and buy the licence for it.")
+				fmt.Fprintf(out, "Next: send this address some QOR for fees and the 1,000 QOR stake. Licence: %s.\n", daemon.LicenceSource(cfg.ChainID))
 			}
 			fmt.Fprintf(out, "Then run `%s register`.\n", Binary)
 			return nil
