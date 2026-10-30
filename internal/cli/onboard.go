@@ -264,6 +264,11 @@ func runOnboard(cmd *cobra.Command, nonInteractive bool) error {
 		// 26657 unless otherwise specified.
 		cfg.RPCAddr = endpoint
 		cfg.PrimaryAddr = endpoint
+		// Written out, not left to be derived at every start: the operator sees
+		// which REST endpoint the node uses and can correct it in one place.
+		if lcd := client.DeriveLCDURL(endpoint); lcd != endpoint {
+			cfg.APIAddr = lcd
+		}
 	} else {
 		cfg.RPCAddr = ""
 		cfg.PrimaryAddr = ""
