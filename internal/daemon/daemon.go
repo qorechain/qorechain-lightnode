@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -421,9 +422,13 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 		res, err := d.signer.Submit(ctx, d.heartbeatKey(), d.cfg.KeyName, "lightnode", "heartbeat")
 		if err != nil {
 			d.logger.Warn("heartbeat failed", "error", err)
+			if strings.Contains(err.Error(), "insufficient funds") {
+				d.checkFeeBalance(ctx, intervalBlocks)
+			}
 			return
 		}
 		d.logger.Info("heartbeat in a block", "tx_hash", res.TxHash, "height", h)
+		d.checkFeeBalance(ctx, intervalBlocks)
 	}
 
 	tick()
@@ -435,6 +440,54 @@ func (d *Daemon) heartbeatLoop(ctx context.Context) {
 			tick()
 		}
 	}
+}
+
+// feeWarnDays is how many days of heartbeat fees the operator account should
+// hold. Below it the node warns after every heartbeat; at zero the chain
+// refuses the next heartbeat ("insufficient funds") and, 1,100 blocks after the
+// last one, marks the node inactive, which then lowers its uptime.
+const feeWarnDays = 3
+
+// checkFeeBalance warns when the operator account's spendable balance covers
+// fewer than feeWarnDays of heartbeats. Rewards are not counted: they are paid
+// only when claimed, and auto-claim waits for min_reward_claim.
+func (d *Daemon) checkFeeBalance(ctx context.Context, intervalBlocks int64) {
+	fee := d.heartbeatFee()
+	if fee == 0 || d.cfg.OperatorAddress == "" {
+		return
+	}
+	spendable, err := d.chain.SpendableUqor(ctx, d.cfg.OperatorAddress)
+	if err != nil {
+		return
+	}
+	blockTime, err := d.chain.BlockTimeSeconds(ctx, 100)
+	if err != nil || blockTime <= 0 {
+		return
+	}
+	perDay := 86400 / (float64(intervalBlocks) * blockTime)
+	left := spendable / fee
+	days := float64(left) / perDay
+	if days >= feeWarnDays {
+		return
+	}
+	d.logger.Warn("the operator account is running out of fee money: send it QOR or the node stops heartbeating and goes inactive",
+		"operator", d.cfg.OperatorAddress,
+		"spendable_uqor", spendable,
+		"fee_per_heartbeat_uqor", fee,
+		"heartbeats_left", left,
+		"days_left", fmt.Sprintf("%.1f", days),
+		"needed_per_day_uqor", uint64(math.Ceil(perDay*float64(fee))),
+	)
+}
+
+// heartbeatFee is what one heartbeat costs, in uqor: the native signer's next
+// limit at its gas price, or the qorechaind fallback's configured fees.
+func (d *Daemon) heartbeatFee() uint64 {
+	if n, ok := d.signer.(*nativeSubmitter); ok {
+		return n.FeePerTx("lightnode heartbeat")
+	}
+	f, _ := strconv.ParseUint(strings.TrimSuffix(d.cfg.Heartbeat.Fees, "uqor"), 10, 64)
+	return f
 }
 
 func (d *Daemon) heartbeatKey() string {

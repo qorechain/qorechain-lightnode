@@ -27,10 +27,11 @@ var ProofOfPossessionUpgrades = []string{"v3.2.3"}
 
 // Result is the block's answer for a transaction.
 type Result struct {
-	TxHash string
-	Height int64
-	Code   uint32
-	RawLog string
+	TxHash  string
+	Height  int64
+	Code    uint32
+	RawLog  string
+	GasUsed uint64 // as executed in the block; 0 when unknown
 }
 
 // Signer builds, signs, broadcasts and confirms transactions for one operator
@@ -289,17 +290,19 @@ func (s *Signer) awaitInclusion(ctx context.Context, hash string) (Result, error
 	for {
 		var resp struct {
 			TxResponse struct {
-				Height string `json:"height"`
-				TxHash string `json:"txhash"`
-				Code   uint32 `json:"code"`
-				RawLog string `json:"raw_log"`
+				Height  string `json:"height"`
+				TxHash  string `json:"txhash"`
+				Code    uint32 `json:"code"`
+				RawLog  string `json:"raw_log"`
+				GasUsed string `json:"gas_used"`
 			} `json:"tx_response"`
 		}
 		err := s.getJSON(ctx, "/cosmos/tx/v1beta1/txs/"+hash, &resp)
 		if err == nil && resp.TxResponse.TxHash != "" {
 			r := resp.TxResponse
 			h, _ := strconv.ParseInt(r.Height, 10, 64)
-			res := Result{TxHash: r.TxHash, Height: h, Code: r.Code, RawLog: r.RawLog}
+			used, _ := strconv.ParseUint(r.GasUsed, 10, 64)
+			res := Result{TxHash: r.TxHash, Height: h, Code: r.Code, RawLog: r.RawLog, GasUsed: used}
 			if r.Code != 0 {
 				return res, fmt.Errorf("failed in the block: code %d: %s", r.Code, r.RawLog)
 			}

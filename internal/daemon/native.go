@@ -3,8 +3,10 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/qorechain/qorechain-lightnode/internal/chaintx"
 	"github.com/qorechain/qorechain-lightnode/internal/config"
@@ -56,9 +58,63 @@ func NativeSigner(cfg config.Config, keys keyring.Backend, lcd string) (*chaintx
 }
 
 // nativeSubmitter adapts chaintx.Signer to the loops' qorechaind-shaped calls.
+//
+// The fee is charged on the gas limit, not on the gas used, so a limit far
+// above what a heartbeat uses was paid for on every heartbeat: 300,000 declared
+// for ~165,000-172,000 used, about 2 QOR a day on mainnet. The limit for each
+// transaction kind is the gas its last run used plus a quarter (gasMargin),
+// within [gasFloor, gas]; the first run, and any run after one that ran out of
+// gas, uses gas, the configured ceiling.
 type nativeSubmitter struct {
 	s   *chaintx.Signer
 	gas uint64
+
+	mu       sync.Mutex
+	lastUsed map[string]uint64
+}
+
+const (
+	gasMargin = 1.25
+	gasFloor  = 100000
+	// codeOutOfGas is the SDK's ErrOutOfGas.
+	codeOutOfGas = 11
+)
+
+// limitFor is the gas limit for the next transaction of this kind.
+func (n *nativeSubmitter) limitFor(kind string) uint64 {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	used := n.lastUsed[kind]
+	if used == 0 {
+		return n.gas
+	}
+	limit := uint64(math.Ceil(float64(used)*gasMargin/1000)) * 1000
+	if limit < gasFloor {
+		limit = gasFloor
+	}
+	if limit > n.gas {
+		limit = n.gas
+	}
+	return limit
+}
+
+func (n *nativeSubmitter) record(kind string, r chaintx.Result) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.lastUsed == nil {
+		n.lastUsed = map[string]uint64{}
+	}
+	switch {
+	case r.Code == codeOutOfGas:
+		delete(n.lastUsed, kind) // back to the ceiling
+	case r.Code == 0 && r.GasUsed > 0:
+		n.lastUsed[kind] = r.GasUsed
+	}
+}
+
+// FeePerTx is what the next transaction of this kind costs, in uqor.
+func (n *nativeSubmitter) FeePerTx(kind string) uint64 {
+	return uint64(math.Ceil(float64(n.limitFor(kind)) * n.s.GasPrice))
 }
 
 func (n *nativeSubmitter) Submit(ctx context.Context, _, _ string, txArgs ...string) (txResult, error) {
@@ -72,7 +128,9 @@ func (n *nativeSubmitter) Submit(ctx context.Context, _, _ string, txArgs ...str
 	default:
 		return txResult{}, fmt.Errorf("native signer: unsupported transaction %q", strings.Join(txArgs, " "))
 	}
-	r, err := n.s.Submit(ctx, n.gas, msg)
+	kind := strings.Join(txArgs, " ")
+	r, err := n.s.Submit(ctx, n.limitFor(kind), msg)
+	n.record(kind, r)
 	return txResult{TxHash: r.TxHash, Code: int(r.Code), RawLog: r.RawLog}, err
 }
 

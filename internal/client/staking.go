@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"strconv"
 )
 
 // Validators returns all bonded validators.
@@ -34,4 +35,22 @@ func (c *Client) Validator(ctx context.Context, valoper string) (*ValidatorInfo,
 		return nil, err
 	}
 	return &resp.Validator, nil
+}
+
+// SpendableUqor is the account's spendable uqor: its balance minus what is
+// locked by vesting. Delegated stake is not in it. Fees are paid from it.
+func (c *Client) SpendableUqor(ctx context.Context, addr string) (uint64, error) {
+	var resp struct {
+		Balance struct {
+			Amount string `json:"amount"`
+		} `json:"balance"`
+	}
+	url := fmt.Sprintf("%s/cosmos/bank/v1beta1/spendable_balances/%s/by_denom?denom=uqor", c.lcdURL, addr)
+	if err := c.get(ctx, url, &resp); err != nil {
+		return 0, err
+	}
+	if resp.Balance.Amount == "" {
+		return 0, nil
+	}
+	return strconv.ParseUint(resp.Balance.Amount, 10, 64)
 }
