@@ -81,11 +81,11 @@ func (c *Client) LicenseCheck(ctx context.Context, grantee, feature string) (Lic
 		if strings.Contains(string(body), "no license") {
 			return LicenseStatus{}, nil
 		}
-		return LicenseStatus{}, fmt.Errorf("HTTP 404: %s", string(body))
+		return LicenseStatus{}, fmt.Errorf("HTTP 404: %s", errorBody(body))
 	case http.StatusNotImplemented:
 		return LicenseStatus{}, ErrEndpointUnavailable
 	default:
-		return LicenseStatus{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return LicenseStatus{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errorBody(body))
 	}
 }
 
@@ -124,7 +124,7 @@ func (c *Client) LightNodeRegistration(ctx context.Context, operator string) (re
 	case http.StatusNotImplemented:
 		return false, nil, ErrEndpointUnavailable
 	default:
-		return false, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return false, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, errorBody(body))
 	}
 }
 

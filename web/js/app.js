@@ -201,6 +201,11 @@ document.addEventListener("alpine:init", () => {
             this.ws.onmessage = (evt) => {
                 try {
                     const msg = JSON.parse(evt.data);
+                    if (msg && msg.type === "ping") {
+                        // The node drops a connection that stays silent.
+                        this.ws.send('{"type":"pong"}');
+                        return;
+                    }
                     this.handleWSMessage(msg);
                 } catch (_) {
                     // ignore malformed messages

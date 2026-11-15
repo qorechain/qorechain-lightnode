@@ -113,7 +113,7 @@ func (c *Client) BroadcastTx(ctx context.Context, txBytes []byte) (*BroadcastTxR
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("broadcast tx: HTTP %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("broadcast tx: HTTP %d: %s", resp.StatusCode, errorBody(body))
 	}
 
 	var txResp BroadcastTxResponse

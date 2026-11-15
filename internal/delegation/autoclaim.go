@@ -30,7 +30,20 @@ type AutoClaimer struct {
 	interval  time.Duration
 	minReward *big.Int // uqor
 	logger    *slog.Logger
+
+	lastAttempt time.Time
 }
+
+// The amount to claim comes from the REST endpoint, which the node does not
+// verify. An endpoint that reports rewards the node does not have would make it
+// pay a claim fee on every check. These bound what that costs: checks at most
+// every minClaimInterval, and at most one claim submitted per minClaimGap
+// whatever the endpoint says (4 claim fees a day at worst). Real rewards accrue
+// slowly enough that a 6-hour gap delays nothing that matters.
+const (
+	minClaimInterval = 10 * time.Minute
+	minClaimGap      = 6 * time.Hour
+)
 
 // NewAutoClaimer creates the claim loop.
 func NewAutoClaimer(chain *client.Client, submit TxSubmitter, operator string, interval time.Duration, minReward int64, logger *slog.Logger) *AutoClaimer {
@@ -46,6 +59,10 @@ func NewAutoClaimer(chain *client.Client, submit TxSubmitter, operator string, i
 
 // Run drives the loop until ctx ends.
 func (ac *AutoClaimer) Run(ctx context.Context) error {
+	if ac.interval < minClaimInterval {
+		ac.logger.Info("auto-claim: compound_interval raised to the minimum", "configured", ac.interval, "used", minClaimInterval)
+		ac.interval = minClaimInterval
+	}
 	ticker := time.NewTicker(ac.interval)
 	defer ticker.Stop()
 	for {
@@ -78,6 +95,12 @@ func (ac *AutoClaimer) claim(ctx context.Context) {
 		ac.logger.Debug("auto-claim: rewards below threshold", "accrued_uqor", accrued.String(), "min_uqor", ac.minReward.String())
 		return
 	}
+
+	if since := time.Since(ac.lastAttempt); !ac.lastAttempt.IsZero() && since < minClaimGap {
+		ac.logger.Debug("auto-claim: last claim too recent", "since", since.Round(time.Minute), "gap", minClaimGap)
+		return
+	}
+	ac.lastAttempt = time.Now()
 
 	ac.logger.Info("auto-claim: claiming light node rewards", "accrued_uqor", accrued.String())
 	hash, err := ac.submit.SubmitLightNodeTx(ctx, "lightnode", "claim-rewards")

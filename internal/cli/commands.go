@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -218,12 +219,47 @@ func keysShowCmd() *cobra.Command {
 }
 
 func keysImportCmd() *cobra.Command {
-	var keyType string
+	var keyType, keyFile string
+	var unsafeArgv bool
 	cmd := &cobra.Command{
-		Use:   "import <name> <hex-privkey>",
-		Short: "Import a private key",
-		Args:  cobra.ExactArgs(2),
+		Use:   "import <name>",
+		Short: "Import a private key (hex) from standard input or --key-file",
+		Long: `Import a hex-encoded private key under <name>.
+
+The key is read from standard input, or from --key-file (a file only you can
+read). It is not taken from the command line: arguments are visible to every
+user of the machine in the process list (/proc/<pid>/cmdline, ps) and are kept
+in the shell's history. --unsafe-argv accepts the old form, import <name> <hex>,
+for scripts that cannot change yet.`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			var hexKey string
+			switch {
+			case len(args) == 2:
+				if !unsafeArgv {
+					return fmt.Errorf("the private key is not accepted on the command line, where other users and the shell history can read it: " +
+						"pipe it on standard input or pass --key-file (or add --unsafe-argv to accept the risk)")
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: the private key was passed on the command line; it may be in the process list and your shell history")
+				hexKey = args[1]
+			case keyFile != "":
+				b, err := os.ReadFile(keyFile)
+				if err != nil {
+					return fmt.Errorf("reading --key-file: %w", err)
+				}
+				hexKey = string(b)
+			default:
+				b, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<16))
+				if err != nil {
+					return fmt.Errorf("reading the key from standard input: %w", err)
+				}
+				hexKey = string(b)
+			}
+			hexKey = strings.TrimSpace(hexKey)
+			if hexKey == "" {
+				return fmt.Errorf("no key given: pipe the hex key on standard input or pass --key-file")
+			}
+
 			cfg, err := LoadConfig()
 			if err != nil {
 				return err
@@ -232,7 +268,7 @@ func keysImportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			privBytes, err := hex.DecodeString(args[1])
+			privBytes, err := hex.DecodeString(hexKey)
 			if err != nil {
 				return fmt.Errorf("invalid hex key: %w", err)
 			}
@@ -245,6 +281,8 @@ func keysImportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&keyType, "type", "dilithium5", "key type (currently supported: dilithium5)")
+	cmd.Flags().StringVar(&keyFile, "key-file", "", "read the hex private key from this file instead of standard input")
+	cmd.Flags().BoolVar(&unsafeArgv, "unsafe-argv", false, "accept the key as a second argument (visible in the process list and shell history)")
 	return cmd
 }
 

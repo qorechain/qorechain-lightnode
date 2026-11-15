@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/delegation"
 	"github.com/qorechain/qorechain-lightnode/internal/keyring"
 	"github.com/qorechain/qorechain-lightnode/internal/lightclient"
+	"github.com/qorechain/qorechain-lightnode/internal/netutil"
 	"github.com/qorechain/qorechain-lightnode/internal/telemetry"
 	"github.com/qorechain/qorechain-lightnode/internal/update"
 )
@@ -65,6 +67,12 @@ func New(cfg config.Config) (*Daemon, error) {
 	lcdURL := cfg.APIAddr
 	if lcdURL == "" {
 		lcdURL = deriveLCDURL(cfg.RPCAddr)
+	}
+	// Licence, registration, rewards and the signer's account all come from
+	// this endpoint; over plain http to another machine anyone on the path can
+	// rewrite them.
+	if u, err := url.Parse(lcdURL); err == nil && u.Scheme == "http" && !netutil.IsLoopbackHost(u.Hostname()) {
+		logger.Warn("the chain REST endpoint is plain http to another machine: its answers can be altered in transit; use https", "api_addr", lcdURL)
 	}
 
 	// Chain client

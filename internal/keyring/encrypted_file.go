@@ -141,12 +141,17 @@ func (b *EncryptedFileBackend) saveEntries(entries map[string]keyEntry) error {
 		return err
 	}
 
-	return os.WriteFile(b.keystorePath(), data, 0600)
+	return writeAtomic(b.keystorePath(), data)
 }
 
 func (b *EncryptedFileBackend) Create(name string, keyType KeyType) (KeyInfo, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	unlock, err := b.lockFile()
+	if err != nil {
+		return KeyInfo{}, err
+	}
+	defer unlock()
 
 	entries, err := b.loadEntries()
 	if err != nil {
@@ -190,6 +195,11 @@ func (b *EncryptedFileBackend) Create(name string, keyType KeyType) (KeyInfo, er
 func (b *EncryptedFileBackend) Import(name string, keyType KeyType, privkey []byte) (KeyInfo, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	unlock, err := b.lockFile()
+	if err != nil {
+		return KeyInfo{}, err
+	}
+	defer unlock()
 
 	entries, err := b.loadEntries()
 	if err != nil {
@@ -257,6 +267,11 @@ func (b *EncryptedFileBackend) List() ([]KeyInfo, error) {
 func (b *EncryptedFileBackend) Delete(name string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	unlock, err := b.lockFile()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	entries, err := b.loadEntries()
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 	"github.com/qorechain/qorechain-lightnode/internal/update"
 )
 
-const version = "3.1.13"
+const version = "3.1.14"
 
 func main() {
 	root := &cobra.Command{

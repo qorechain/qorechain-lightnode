@@ -16,8 +16,10 @@ const (
 	// writeWait is the maximum time to wait for a write to complete.
 	writeWait = 10 * time.Second
 
-	// pongWait is the maximum time to wait for a pong response.
-	pongWait = 60 * time.Second
+	// pongWait is how long a connection may stay silent. The dashboard page
+	// answers every ping with a pong; a connection that sends nothing for two
+	// ping periods is dropped, so idle sockets cannot pile up.
+	pongWait = 2*pingPeriod + 10*time.Second
 
 	// pingPeriod sends pings at this interval (must be < pongWait).
 	pingPeriod = 50 * time.Second
@@ -27,6 +29,10 @@ const (
 
 	// sendBufferSize is the channel buffer for outbound messages.
 	sendBufferSize = 64
+
+	// maxClients caps concurrent connections. One operator's browser tabs need
+	// a handful; each connection holds a goroutine pair and a send buffer.
+	maxClients = 32
 )
 
 // Hub manages WebSocket connections and broadcasts updates to all
@@ -67,14 +73,23 @@ func (h *Hub) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.ClientCount() >= maxClients {
+		http.Error(w, "too many dashboard connections", http.StatusServiceUnavailable)
+		return
+	}
+
 	handler := websocket.Handler(func(conn *websocket.Conn) {
+		conn.MaxPayloadBytes = maxMessageSize
 		c := &wsClient{
 			hub:  h,
 			conn: conn,
 			send: make(chan []byte, sendBufferSize),
 		}
 
-		h.register(c)
+		if !h.register(c) {
+			conn.Close()
+			return
+		}
 		defer h.unregister(c)
 
 		// Start write pump in background
@@ -126,11 +141,17 @@ func (h *Hub) ClientCount() int {
 	return len(h.clients)
 }
 
-func (h *Hub) register(c *wsClient) {
+func (h *Hub) register(c *wsClient) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	// The count before the upgrade is a fast path; this is the one that holds
+	// when several handshakes race.
+	if len(h.clients) >= maxClients {
+		return false
+	}
 	h.clients[c] = true
 	h.logger.Debug("websocket client connected", "clients", len(h.clients))
+	return true
 }
 
 func (h *Hub) unregister(c *wsClient) {
@@ -149,13 +170,14 @@ func (c *wsClient) readPump() {
 	defer c.conn.Close()
 
 	for {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait)) //nolint:errcheck
 		var msg []byte
 		if err := websocket.Message.Receive(c.conn, &msg); err != nil {
 			// Connection closed or read error
 			break
 		}
-		// Future: handle incoming commands from the dashboard UI.
-		// For now, messages from the client are ignored.
+		// Any message (the page's pong) renews the deadline; contents are
+		// ignored.
 	}
 }
 
